@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}New Project · DEE STRUCTURA AI{% endblock %}
+{% block content %}
+  <h1>New Project</h1>
+
+  <form method="post" class="card-form">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_name">Project Name</label>
+      {{ form.name }}
+      {% if form.name.errors %}<div class="field-errors">{{ form.name.errors }}</div>{% endif %}
+    </div>
+    <div class="field">
+      <label for="id_client_name">Client Name</label>
+      {{ form.client_name }}
+      {% if form.client_name.errors %}<div class="field-errors">{{ form.client_name.errors }}</div>{% endif %}
+    </div>
+    <div class="field">
+      <label for="id_location">Location (City)</label>
+      {{ form.location }}
+      {% if form.location.errors %}<div class="field-errors">{{ form.location.errors }}</div>{% endif %}
+    </div>
+    <div class="field">
+      <label for="id_building_type">Building Type</label>
+      {{ form.building_type }}
+      {% if form.building_type.errors %}<div class="field-errors">{{ form.building_type.errors }}</div>{% endif %}
+    </div>
+    <button type="submit" class="btn-primary btn-inline">Create Project</button>
+  </form>
+{% endblock %}

@@ -1,0 +1,25 @@
+@page {
+  size: A4;
+  margin: 15mm;
+}
+
+body, .main-content, .app-shell {
+  background: #fff !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.boq-document {
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+}
+
+.boq-element {
+  page-break-inside: avoid;
+}
+
+.boq-table tr {
+  page-break-inside: avoid;
+}

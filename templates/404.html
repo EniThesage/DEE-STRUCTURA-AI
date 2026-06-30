@@ -1,0 +1,71 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page Not Found · DEE STRUCTURA AI</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32x32.png' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'img/favicon-16x16.png' %}">
+  <link rel="shortcut icon" href="{% static 'img/favicon.ico' %}">
+  <link rel="apple-touch-icon" href="{% static 'img/apple-touch-icon.png' %}">
+  <style>
+    body {
+      margin: 0;
+      background: #0d1410;
+      color: #e7efe9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .error-card {
+      text-align: center;
+      max-width: 420px;
+      padding: 40px;
+    }
+    .brand {
+      color: #2dd4bf;
+      font-weight: 700;
+      font-size: 22px;
+    }
+    .error-code {
+      font-size: 64px;
+      font-weight: 700;
+      color: #1f7a40;
+      margin: 16px 0 0;
+      line-height: 1;
+    }
+    h1 {
+      font-size: 20px;
+      margin: 12px 0 8px;
+    }
+    p {
+      color: #9fb3a6;
+      margin: 0 0 28px;
+    }
+    .btn-primary {
+      display: inline-block;
+      background: #1f7a40;
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      padding: 12px 28px;
+      border-radius: 8px;
+    }
+    .btn-primary:hover {
+      filter: brightness(1.08);
+    }
+  </style>
+</head>
+<body>
+  <div class="error-card">
+    <div class="brand">DEE STRUCTURA AI</div>
+    <div class="error-code">404</div>
+    <h1>This page doesn't exist</h1>
+    <p>The page you're looking for may have been moved or removed.</p>
+    <a href="/" class="btn-primary">Back to Dashboard</a>
+  </div>
+</body>
+</html>

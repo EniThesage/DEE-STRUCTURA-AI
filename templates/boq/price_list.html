@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Live Prices · DEE STRUCTURA AI{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1>Live Material Prices</h1>
+  </div>
+
+  <div class="city-tabs">
+    {% for value, label in cities %}
+      <a href="?city={{ value }}" class="{% if value == selected_city %}active{% endif %}">{{ label }}</a>
+    {% endfor %}
+  </div>
+
+  {% if prices %}
+  <div class="field">
+    <input type="text" id="material-search" placeholder="Search materials…" autocomplete="off">
+  </div>
+  <table class="data-table" id="price-table">
+    <thead>
+      <tr>
+        <th>Material</th>
+        <th>Unit</th>
+        <th>Rate</th>
+        <th>Change</th>
+        <th>Last Updated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for price in prices %}
+      <tr data-material-name="{{ price.material_name|lower }}">
+        <td>{{ price.material_name }}</td>
+        <td>{{ price.unit }}</td>
+        <td class="amber">₦{{ price.rate|floatformat:0 }}</td>
+        <td>
+          {% if price.change_percent is not None %}
+            {% if price.change_percent > 0 %}
+              <span class="price-up">▲ {{ price.change_percent|floatformat:1 }}%</span>
+            {% elif price.change_percent < 0 %}
+              <span class="price-down">▼ {{ price.change_percent|floatformat:1 }}%</span>
+            {% else %}
+              <span class="price-flat">— 0.0%</span>
+            {% endif %}
+          {% else %}
+            <span class="price-flat">—</span>
+          {% endif %}
+        </td>
+        <td>{{ price.date_updated|date:"d M Y" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <script src="{% static 'js/price_search.js' %}"></script>
+  {% else %}
+  <p class="empty-state">No prices seeded yet for this city. Run <code>python manage.py seed_material_prices</code> or add rates via the Django admin.</p>
+  {% endif %}
+{% endblock %}

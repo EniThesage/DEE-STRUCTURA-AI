@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Letterhead · {{ project.name }} · DEE STRUCTURA AI{% endblock %}
+{% block content %}
+  <h1>BOQ Letterhead — {{ project.name }}</h1>
+  <p>These details appear on the printed and exported BOQ document.</p>
+
+  <form method="post" class="card-form">
+    {% csrf_token %}
+    {% for field in form %}
+    <div class="field">
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.errors %}<div class="field-errors">{{ field.errors }}</div>{% endif %}
+    </div>
+    {% endfor %}
+    <button type="submit" class="btn-primary btn-inline">Save Letterhead</button>
+    <a href="{% url 'beme:detail' project.pk %}" class="btn-inline">Cancel</a>
+  </form>
+{% endblock %}

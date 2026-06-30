@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Admin Panel · DEE STRUCTURA AI{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1>Admin Panel</h1>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Registered Users</div>
+      <div class="stat-value">{{ total_users }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Projects</div>
+      <div class="stat-value">{{ total_projects }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total BOQs Generated</div>
+      <div class="stat-value">{{ total_boqs }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Struxy Messages</div>
+      <div class="stat-value">{{ total_struxy_messages }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Struxy Messages (Last 24h)</div>
+      <div class="stat-value">{{ struxy_messages_24h }}</div>
+    </div>
+  </div>
+
+  <h2>Top Struxy Users</h2>
+  {% if struxy_top_users %}
+  <table class="data-table">
+    <thead>
+      <tr><th>Name</th><th>Email</th><th>Messages Sent</th></tr>
+    </thead>
+    <tbody>
+      {% for row in struxy_top_users %}
+      <tr>
+        <td>{{ row.user__name|default:"—" }}</td>
+        <td>{{ row.user__email }}</td>
+        <td>{{ row.message_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty-state">No Struxy messages sent yet.</p>
+  {% endif %}
+
+  <h2>Users</h2>
+  <table class="data-table">
+    <thead>
+      <tr><th>Name</th><th>Email</th><th>Role</th><th>Occupation</th><th>Date Joined</th></tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.name|default:"—" }}</td>
+        <td>{{ u.email }}</td>
+        <td>{{ u.get_role_display }}</td>
+        <td>{{ u.get_occupation_display }}</td>
+        <td>{{ u.date_joined|date:"d M Y" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

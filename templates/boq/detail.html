@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}BOQ · {{ project.name }} · DEE STRUCTURA AI{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{% static 'css/boq_print.css' %}" media="print">
+{% endblock %}
+{% block content %}
+  <div class="page-header no-print">
+    <h1>Bill of Quantities</h1>
+    <div>
+      <a href="{% url 'beme:edit' project.pk %}" class="btn-inline">Edit Line Items</a>
+      <a href="{% url 'beme:letterhead' project.pk %}" class="btn-inline">Edit Letterhead</a>
+      <a href="{% url 'beme:export' project.pk %}" class="btn-inline">Download as Excel</a>
+      <button type="button" onclick="window.print()" class="btn-primary btn-inline">Print / Save as PDF</button>
+      <form method="post" action="{% url 'beme:delete' project.pk %}" class="confirm-delete-form btn-inline"
+            data-confirm-title="Delete this BOQ?"
+            data-confirm-body="This permanently deletes the generated BOQ for this project, including every element, line item, and total. This cannot be undone.">
+        {% csrf_token %}
+        <button type="submit" class="btn-inline btn-danger">Delete BOQ</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="boq-document">
+    <div class="boq-letterhead" style="border-top-color: {{ document.letterhead_color }};">
+      <h2>{{ document.letterhead_company|default:"DEE STRUCTURA AI" }}</h2>
+      {% if document.letterhead_address %}<p>{{ document.letterhead_address }}</p>{% endif %}
+      <p>
+        {% if document.letterhead_phone %}{{ document.letterhead_phone }}{% endif %}
+        {% if document.letterhead_email %} · {{ document.letterhead_email }}{% endif %}
+      </p>
+    </div>
+
+    <div class="boq-title">
+      <h1>{{ project.name|upper }}</h1>
+      <p>BILL NO. 1: {{ bill_description }}</p>
+      {% if document.reference_number %}<p>Ref: {{ document.reference_number }}</p>{% endif %}
+    </div>
+
+    {% for entry in elements_data %}
+    <div class="boq-element">
+      <h2>ELEMENT NO. {{ entry.element.element_number }} — {{ entry.element.title|upper }}</h2>
+      {% for page in entry.pages %}
+      <table class="data-table boq-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Description</th>
+            <th>Qty</th>
+            <th>Unit</th>
+            <th>Rate (₦)</th>
+            <th>Amount (₦)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for line in page.lines %}
+          <tr>
+            <td>{{ line.item_label }}</td>
+            {% if line.is_section_header %}
+            <td colspan="5" class="section-header">{{ line.description }}</td>
+            {% else %}
+            <td>{{ line.description }}</td>
+            <td class="num">{{ line.qty|default:"" }}</td>
+            <td>{{ line.unit }}</td>
+            <td class="num">{% if line.rate %}{{ line.rate|floatformat:0 }}{% endif %}</td>
+            <td class="num">{{ line.amount|floatformat:0 }}</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+          <tr class="row-carried">
+            <td colspan="5">Carried to Collection</td>
+            <td class="num">{{ page.subtotal|floatformat:0 }}</td>
+          </tr>
+        </tbody>
+      </table>
+      {% endfor %}
+
+      <table class="data-table boq-table boq-collection">
+        <tbody>
+          <tr><td colspan="6" class="section-header">COLLECTION</td></tr>
+          {% for page in entry.pages %}
+          <tr>
+            <td colspan="5">Page {{ page.code }}</td>
+            <td class="num">{{ page.subtotal|floatformat:0 }}</td>
+          </tr>
+          {% endfor %}
+          <tr class="row-total">
+            <td colspan="5">ELEMENT TOTAL Carried to Summary</td>
+            <td class="num">{{ entry.element.total|floatformat:0 }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+
+    <div class="boq-summary">
+      <h2>SUMMARY</h2>
+      <table class="data-table boq-table">
+        <thead>
+          <tr><th>S/No</th><th>Description</th><th>Amount (₦)</th></tr>
+        </thead>
+        <tbody>
+          {% for entry in elements_data %}
+          <tr>
+            <td>{{ entry.element.element_number }}</td>
+            <td>{{ entry.element.title|upper }}</td>
+            <td class="num">{{ entry.element.total|floatformat:0 }}</td>
+          </tr>
+          {% endfor %}
+          <tr class="row-total">
+            <td colspan="2">TOTAL AMOUNT</td>
+            <td class="num">{{ document.grand_total|floatformat:0 }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="boq-general-summary">
+      <h2>GENERAL SUMMARY</h2>
+      <table class="data-table boq-table">
+        <thead>
+          <tr><th>S/No</th><th>Description</th><th>Amount (₦)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>Main Building</td><td class="num">{{ document.grand_total|floatformat:0 }}</td></tr>
+          <tr class="row-total">
+            <td colspan="2">SUB-TOTAL</td>
+            <td class="num">{{ document.grand_total|floatformat:0 }}</td>
+          </tr>
+          <tr>
+            <td colspan="2">ADD: PRELIMINARIES ({{ document.preliminaries_percent }}%)</td>
+            <td class="num">{{ document.preliminaries|floatformat:0 }}</td>
+          </tr>
+          <tr>
+            <td colspan="2">ADD: CONTINGENCY ({{ document.contingency_percent }}%)</td>
+            <td class="num">{{ document.contingency_amount|floatformat:0 }}</td>
+          </tr>
+          <tr>
+            <td colspan="2">ADD: PROFESSIONAL FEES ({{ document.professional_fees_percent }}%)</td>
+            <td class="num">{{ document.professional_fees_amount|floatformat:0 }}</td>
+          </tr>
+          <tr>
+            <td colspan="2">ADD: VAT ({{ document.vat_percent }}%)</td>
+            <td class="num">{{ document.vat_amount|floatformat:0 }}</td>
+          </tr>
+          <tr class="row-total">
+            <td colspan="2">TOTAL CONTRACT SUM</td>
+            <td class="num">{{ document.contract_sum|floatformat:0 }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="boq-footer">
+      <p>Prepared by: {{ document.prepared_by|default:"_______________________" }}</p>
+      <p>Date: {{ document.generated_at|date:"d M Y" }}</p>
+    </div>
+  </div>
+{% endblock %}

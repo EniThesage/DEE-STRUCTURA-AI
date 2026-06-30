@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Review Rooms · {{ project.name }}{% endblock %}
+{% block content %}
+  <h1>Review Rooms — {{ project.name }}</h1>
+  <p class="empty-state">Edit dimensions, add missing rooms, or remove ones that don't belong. Area recalculates automatically. Any row you add or edit here will be marked "Manual" confidence once saved, since it's your input rather than an AI estimate.</p>
+
+  <form method="post" id="room-formset">
+    {% csrf_token %}
+
+    <h2>Building Footprint</h2>
+    <p class="empty-state">Overall footprint (not individual rooms) — pre-filled from floor plan extraction if detected. Drives perimeter-based quantities (foundation trenches, external walls) more accurately than an estimate. Leave blank to use an estimate instead.</p>
+    <div class="footprint-fields">
+      <div class="field">
+        <label for="id_footprint_width_m">Width (m)</label>
+        {{ footprint_form.footprint_width_m }}
+        {% if footprint_form.footprint_width_m.errors %}<div class="field-errors">{{ footprint_form.footprint_width_m.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_footprint_length_m">Length (m)</label>
+        {{ footprint_form.footprint_length_m }}
+        {% if footprint_form.footprint_length_m.errors %}<div class="field-errors">{{ footprint_form.footprint_length_m.errors }}</div>{% endif %}
+      </div>
+    </div>
+
+    {{ formset.management_form }}
+    <table class="data-table" id="room-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Width (m)</th>
+          <th>Length (m)</th>
+          <th>Area (m²)</th>
+          <th>Remove</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for form in formset %}
+        <tr class="room-row">
+          {{ form.id }}
+          <td>{{ form.name }}</td>
+          <td>{{ form.width }}</td>
+          <td>{{ form.length }}</td>
+          <td class="room-area">{{ form.instance.area|default:"0.00" }}</td>
+          <td class="delete-cell">
+            {{ form.DELETE }}
+            <button type="button" class="remove-room-btn btn-inline">Remove</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="form-actions">
+      <button type="button" id="add-room-btn" class="btn-inline">+ Add Room</button>
+      <button type="submit" class="btn-primary btn-inline">Save Rooms</button>
+    </div>
+  </form>
+
+  <template id="empty-room-template">
+    <tr class="room-row">
+      {{ formset.empty_form.id }}
+      <td>{{ formset.empty_form.name }}</td>
+      <td>{{ formset.empty_form.width }}</td>
+      <td>{{ formset.empty_form.length }}</td>
+      <td class="room-area">0.00</td>
+      <td class="delete-cell">
+        {{ formset.empty_form.DELETE }}
+        <button type="button" class="remove-room-btn btn-inline">Remove</button>
+      </td>
+    </tr>
+  </template>
+
+  <script src="{% static 'js/room_review.js' %}"></script>
+{% endblock %}

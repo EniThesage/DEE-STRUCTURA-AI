@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · DEE STRUCTURA AI{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1>{{ project.name }}</h1>
+    <span class="status-badge">{{ project.get_status_display }}</span>
+  </div>
+
+  <div class="detail-grid">
+    <div>
+      <div class="stat-label">Client</div>
+      <div>{{ project.client_name }}</div>
+    </div>
+    <div>
+      <div class="stat-label">Location</div>
+      <div>{{ project.get_location_display }}</div>
+    </div>
+    <div>
+      <div class="stat-label">Building Type</div>
+      <div>{{ project.get_building_type_display }}</div>
+    </div>
+    <div>
+      <div class="stat-label">Created</div>
+      <div>{{ project.created_at|date:"d M Y" }}</div>
+    </div>
+  </div>
+
+  <h2>Floor Plan</h2>
+  <form method="post" action="{% url 'projects:floor_plan_upload' project.pk %}" enctype="multipart/form-data" class="card-form upload-form">
+    {% csrf_token %}
+    <div class="field">
+      <label for="id_file">Upload floor plan (PDF, JPG, PNG, WEBP)</label>
+      {{ upload_form.file }}
+      {% if upload_form.file.errors %}<div class="field-errors">{{ upload_form.file.errors }}</div>{% endif %}
+    </div>
+    <button type="submit" class="btn-primary btn-inline">Upload &amp; Extract Rooms</button>
+  </form>
+
+  {% if floor_plans %}
+  <table class="data-table">
+    <thead>
+      <tr><th>File</th><th>Status</th><th>Uploaded</th></tr>
+    </thead>
+    <tbody>
+      {% for fp in floor_plans %}
+      <tr>
+        <td><a href="{{ fp.file.url }}" target="_blank">{{ fp.file.name }}</a></td>
+        <td>{{ fp.get_extraction_status_display }}{% if fp.extraction_error %} — {{ fp.extraction_error }}{% endif %}</td>
+        <td>{{ fp.uploaded_at|date:"d M Y H:i" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2>Rooms</h2>
+  {% if rooms %}
+  <table class="data-table">
+    <thead>
+      <tr><th>Name</th><th>Width (m)</th><th>Length (m)</th><th>Area (m²)</th><th>Confidence</th><th>Source</th></tr>
+    </thead>
+    <tbody>
+      {% for room in rooms %}
+      <tr>
+        <td>{{ room.name }}</td>
+        <td>{{ room.width }}</td>
+        <td>{{ room.length }}</td>
+        <td>{{ room.area }}</td>
+        <td><span class="confidence-badge confidence-{{ room.confidence }}">{{ room.get_confidence_display }}</span></td>
+        <td>{% if room.is_manual %}Manual{% else %}AI Extracted{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <a href="{% url 'projects:room_review' project.pk %}" class="btn-primary btn-inline">Edit Rooms</a>
+  {% else %}
+  <p class="empty-state">No rooms yet. Upload a floor plan above, or <a href="{% url 'projects:room_review' project.pk %}">add rooms manually</a>.</p>
+  {% endif %}
+
+  <h2>Specifications</h2>
+  {% if spec %}
+  <div class="detail-grid">
+    <div>
+      <div class="stat-label">Foundation</div>
+      <div>{{ spec.get_foundation_type_display }}</div>
+    </div>
+    <div>
+      <div class="stat-label">Frame</div>
+      <div>{{ spec.get_frame_type_display }}</div>
+    </div>
+    <div>
+      <div class="stat-label">Roof</div>
+      <div>{{ spec.get_roof_type_display }}</div>
+    </div>
+    <div>
+      <div class="stat-label">Electrical</div>
+      <div>{{ spec.get_electrical_package_display }}</div>
+    </div>
+  </div>
+  {% if project.reinforcement_specs.all %}
+  <h3>Reinforcement Schedule</h3>
+  <table class="data-table">
+    <thead><tr><th>Element</th><th>Bar Role</th><th>Bar Size</th><th>Spacing (mm)</th></tr></thead>
+    <tbody>
+      {% for r in project.reinforcement_specs.all %}
+      <tr>
+        <td>{{ r.get_element_display }}</td>
+        <td>{{ r.get_bar_role_display }}</td>
+        <td>{{ r.get_bar_size_display }}</td>
+        <td>{{ r.spacing_mm }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if project.structural_members.all %}
+  <h3>Structural Members</h3>
+  <table class="data-table">
+    <thead><tr><th>Type</th><th>Label</th><th>Size</th><th>Count</th></tr></thead>
+    <tbody>
+      {% for m in project.structural_members.all %}
+      <tr>
+        <td>{{ m.get_member_type_display }}</td>
+        <td>{{ m.label }}</td>
+        <td>{{ m.size }}</td>
+        <td>{{ m.quantity_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <a href="{% url 'projects:spec' project.pk %}" class="btn-inline">Edit Specifications</a>
+  {% else %}
+  <p class="empty-state">No specifications yet. <a href="{% url 'projects:spec' project.pk %}">Run the specifications wizard</a> to capture foundation, frame, walling, roofing, finishes, and services.</p>
+  {% endif %}
+
+  <h2>Bill of Quantities</h2>
+  {% if rooms and spec %}
+  <form method="post" action="{% url 'beme:generate' project.pk %}"
+        {% if project.beme_document %}class="confirm-delete-form"
+        data-confirm-title="Regenerate this BOQ?"
+        data-confirm-body="This recalculates every element and line item from the project's current rooms/spec/prices, discarding any manual edits made on the Edit Line Items page. This cannot be undone."{% endif %}>
+    {% csrf_token %}
+    <button type="submit" class="btn-primary btn-inline">
+      {% if project.beme_document %}Regenerate BOQ{% else %}Generate BOQ{% endif %}
+    </button>
+  </form>
+  {% if project.beme_document %}
+  <a href="{% url 'beme:detail' project.pk %}" class="btn-inline">View BOQ</a>
+  <a href="{% url 'beme:edit' project.pk %}" class="btn-inline">Edit Line Items</a>
+  <form method="post" action="{% url 'beme:delete' project.pk %}" class="confirm-delete-form"
+        data-confirm-title="Delete this BOQ?"
+        data-confirm-body="This permanently deletes the generated BOQ for this project, including every element, line item, and total. This cannot be undone.">
+    {% csrf_token %}
+    <button type="submit" class="btn-inline btn-danger">Delete BOQ</button>
+  </form>
+  {% endif %}
+  {% else %}
+  <p class="empty-state">Add rooms and complete specifications before generating a BOQ.</p>
+  {% endif %}
+{% endblock %}

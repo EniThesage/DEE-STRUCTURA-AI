@@ -1,0 +1,81 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Contact &amp; Feedback · DEE STRUCTURA AI</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32x32.png' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'img/favicon-16x16.png' %}">
+  <link rel="shortcut icon" href="{% static 'img/favicon.ico' %}">
+  <link rel="apple-touch-icon" href="{% static 'img/apple-touch-icon.png' %}">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-card">
+      <h1><span class="brand">DEE STRUCTURA AI</span></h1>
+      <div class="subtitle">Share feedback</div>
+
+      {% if form.non_field_errors %}
+        <div class="alert alert-error">{{ form.non_field_errors }}</div>
+      {% endif %}
+
+      <form method="post">
+        {% csrf_token %}
+        <div class="field">
+          <label for="id_title">Occupation</label>
+          {{ form.title }}
+          {% if form.title.errors %}<div class="field-errors">{{ form.title.errors }}</div>{% endif %}
+        </div>
+        <div class="field">
+          <label for="id_name">Full name</label>
+          <div class="input-icon-group">
+            <i class="bi bi-person input-icon-left"></i>
+            {{ form.name }}
+          </div>
+          {% if form.name.errors %}<div class="field-errors">{{ form.name.errors }}</div>{% endif %}
+        </div>
+        <div class="field">
+          <label for="id_email">Email</label>
+          <div class="input-icon-group">
+            <i class="bi bi-envelope input-icon-left"></i>
+            {{ form.email }}
+          </div>
+          {% if form.email.errors %}<div class="field-errors">{{ form.email.errors }}</div>{% endif %}
+        </div>
+        <div class="field">
+          <label for="id_company_name">Company name</label>
+          <div class="input-icon-group">
+            <i class="bi bi-building input-icon-left"></i>
+            {{ form.company_name }}
+          </div>
+          {% if form.company_name.errors %}<div class="field-errors">{{ form.company_name.errors }}</div>{% endif %}
+        </div>
+        <div class="field">
+          <label for="id_phone_number">Phone number</label>
+          <div class="input-icon-group">
+            <i class="bi bi-telephone input-icon-left"></i>
+            {{ form.phone_number }}
+          </div>
+          {% if form.phone_number.errors %}<div class="field-errors">{{ form.phone_number.errors }}</div>{% endif %}
+        </div>
+        <div class="field">
+          <label for="id_message">Message</label>
+          {{ form.message }}
+          {% if form.message.errors %}<div class="field-errors">{{ form.message.errors }}</div>{% endif %}
+        </div>
+        <button type="submit" class="btn-primary">Send</button>
+      </form>
+
+      <div class="auth-footer">
+        {% if user.is_authenticated %}
+          <a href="{% url 'projects:dashboard' %}">Back to dashboard</a>
+        {% else %}
+          <a href="{% url 'accounts:login' %}">Back to log in</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</body>
+</html>

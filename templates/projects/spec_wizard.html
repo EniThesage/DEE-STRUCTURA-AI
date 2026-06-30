@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Specifications · {{ project.name }}{% endblock %}
+{% block content %}
+  <h1>Project Specifications — {{ project.name }}</h1>
+
+  <div class="wizard-steps-nav" id="wizard-steps-nav">
+    <span class="step-pill" data-step-target="0">1. Foundation</span>
+    <span class="step-pill" data-step-target="1">2. Frame</span>
+    <span class="step-pill" data-step-target="2">3. Structural Members</span>
+    <span class="step-pill" data-step-target="3">4. Reinforcement Schedule</span>
+    <span class="step-pill" data-step-target="4">5. Walling</span>
+    <span class="step-pill" data-step-target="5">6. Roofing</span>
+    <span class="step-pill" data-step-target="6">7. Finishes</span>
+    <span class="step-pill" data-step-target="7">8. Services</span>
+  </div>
+
+  <form method="post" class="card-form spec-form" id="spec-wizard-form" novalidate>
+    {% csrf_token %}
+
+    <div class="wizard-step" data-step="0">
+      <h2>Foundation</h2>
+      <div class="field">
+        <label for="id_foundation_type">Foundation Type</label>
+        {{ form.foundation_type }}
+        {% if form.foundation_type.errors %}<div class="field-errors">{{ form.foundation_type.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_excavation_depth">Excavation Depth (m)</label>
+        {{ form.excavation_depth }}
+        {% if form.excavation_depth.errors %}<div class="field-errors">{{ form.excavation_depth.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_concrete_grade">Concrete Grade</label>
+        {{ form.concrete_grade }}
+        {% if form.concrete_grade.errors %}<div class="field-errors">{{ form.concrete_grade.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_reinforcement_grade">Reinforcement Grade</label>
+        {{ form.reinforcement_grade }}
+        {% if form.reinforcement_grade.errors %}<div class="field-errors">{{ form.reinforcement_grade.errors }}</div>{% endif %}
+        <p class="empty-state">Project-wide default. Individual reinforcement rows can override this.</p>
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="1">
+      <h2>Frame</h2>
+      <div class="field">
+        <label for="id_frame_type">Frame Type</label>
+        {{ form.frame_type }}
+        {% if form.frame_type.errors %}<div class="field-errors">{{ form.frame_type.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_slab_thickness">Slab Thickness (mm)</label>
+        {{ form.slab_thickness }}
+        {% if form.slab_thickness.errors %}<div class="field-errors">{{ form.slab_thickness.errors }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="2">
+      <h2>Structural Members</h2>
+      <p class="empty-state">Add a row per distinct column/beam size — e.g. C1 Column 225x225, 3m length, x6. Add members here first — the Reinforcement Schedule step lets you pick a specific member (e.g. C1) for each column/beam rebar row. Length is column height or beam span — leave it blank to fall back to wall height (columns) or a flat 4m assumed span (beams), but filling it in gives a more accurate concrete/formwork volume.</p>
+      {{ member_formset.management_form }}
+      <table class="data-table" id="member-table">
+        <thead>
+          <tr><th>Type</th><th>Label</th><th>Size (mm)</th><th>Length (m)</th><th>Count</th><th>Remove</th></tr>
+        </thead>
+        <tbody>
+          {% for mf in member_formset %}
+          <tr>
+            {{ mf.id }}
+            <td>{{ mf.member_type }}</td>
+            <td>{{ mf.label }}</td>
+            <td>{{ mf.size }}</td>
+            <td>{{ mf.length_m }}</td>
+            <td>{{ mf.quantity_count }}</td>
+            <td class="delete-cell">
+              {{ mf.DELETE }}
+              <button type="button" class="remove-row-btn btn-inline">Remove</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="button" id="add-member-btn" class="btn-inline">+ Add Structural Member</button>
+      {% if member_formset.non_form_errors %}<div class="field-errors">{{ member_formset.non_form_errors }}</div>{% endif %}
+
+      <template id="empty-member-template">
+        <tr>
+          {{ member_formset.empty_form.id }}
+          <td>{{ member_formset.empty_form.member_type }}</td>
+          <td>{{ member_formset.empty_form.label }}</td>
+          <td>{{ member_formset.empty_form.size }}</td>
+          <td>{{ member_formset.empty_form.length_m }}</td>
+          <td>{{ member_formset.empty_form.quantity_count }}</td>
+          <td class="delete-cell">
+            {{ member_formset.empty_form.DELETE }}
+            <button type="button" class="remove-row-btn btn-inline">Remove</button>
+          </td>
+        </tr>
+      </template>
+    </div>
+
+    <div class="wizard-step" data-step="3">
+      <h2>Reinforcement Schedule</h2>
+      <p class="empty-state">Add a row per element/bar combination — e.g. Slab Main Y12 @ 200mm, Column C1 Stirrup Y8 @ 150mm. For Column or Beam rows, pick which labeled member (added in the Structural Members step) this row applies to — columns/beams use Main or Stirrup bars, not Distribution.</p>
+      {{ reinforcement_formset.management_form }}
+      <table class="data-table" id="reinforcement-table">
+        <thead>
+          <tr><th>Element</th><th>Label</th><th>Bar Role</th><th>Bar Size</th><th>Spacing (mm)</th><th>Remove</th></tr>
+        </thead>
+        <tbody>
+          {% for rf in reinforcement_formset %}
+          <tr>
+            {{ rf.id }}
+            <td>{{ rf.element }}</td>
+            <td>{{ rf.structural_member }}</td>
+            <td>{{ rf.bar_role }}</td>
+            <td>{{ rf.bar_size }}</td>
+            <td>{{ rf.spacing_mm }}</td>
+            <td class="delete-cell">
+              {{ rf.DELETE }}
+              <button type="button" class="remove-row-btn btn-inline">Remove</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="button" id="add-reinforcement-btn" class="btn-inline">+ Add Reinforcement Row</button>
+      {% if reinforcement_formset.non_form_errors %}<div class="field-errors">{{ reinforcement_formset.non_form_errors }}</div>{% endif %}
+
+      <template id="empty-reinforcement-template">
+        <tr>
+          {{ reinforcement_formset.empty_form.id }}
+          <td>{{ reinforcement_formset.empty_form.element }}</td>
+          <td>{{ reinforcement_formset.empty_form.structural_member }}</td>
+          <td>{{ reinforcement_formset.empty_form.bar_role }}</td>
+          <td>{{ reinforcement_formset.empty_form.bar_size }}</td>
+          <td>{{ reinforcement_formset.empty_form.spacing_mm }}</td>
+          <td class="delete-cell">
+            {{ reinforcement_formset.empty_form.DELETE }}
+            <button type="button" class="remove-row-btn btn-inline">Remove</button>
+          </td>
+        </tr>
+      </template>
+    </div>
+
+    <div class="wizard-step" data-step="4">
+      <h2>Walling</h2>
+      <div class="field">
+        <label for="id_wall_type_external">External Wall Type</label>
+        {{ form.wall_type_external }}
+        {% if form.wall_type_external.errors %}<div class="field-errors">{{ form.wall_type_external.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_wall_type_internal">Internal Wall Type</label>
+        {{ form.wall_type_internal }}
+        {% if form.wall_type_internal.errors %}<div class="field-errors">{{ form.wall_type_internal.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_wall_height">Wall Height (m)</label>
+        {{ form.wall_height }}
+        {% if form.wall_height.errors %}<div class="field-errors">{{ form.wall_height.errors }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="5">
+      <h2>Roofing</h2>
+      <div class="field">
+        <label for="id_roof_type">Roof Type</label>
+        {{ form.roof_type }}
+        {% if form.roof_type.errors %}<div class="field-errors">{{ form.roof_type.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_roof_pitch">Roof Pitch (degrees)</label>
+        {{ form.roof_pitch }}
+        {% if form.roof_pitch.errors %}<div class="field-errors">{{ form.roof_pitch.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_truss_type">Truss Type</label>
+        {{ form.truss_type }}
+        {% if form.truss_type.errors %}<div class="field-errors">{{ form.truss_type.errors }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="6">
+      <h2>Finishes</h2>
+      <div class="field">
+        <label for="id_floor_finish">Floor Finish</label>
+        {{ form.floor_finish }}
+        {% if form.floor_finish.errors %}<div class="field-errors">{{ form.floor_finish.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_wall_finish">Wall Finish</label>
+        {{ form.wall_finish }}
+        {% if form.wall_finish.errors %}<div class="field-errors">{{ form.wall_finish.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_ceiling_type">Ceiling Type</label>
+        {{ form.ceiling_type }}
+        {% if form.ceiling_type.errors %}<div class="field-errors">{{ form.ceiling_type.errors }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="wizard-step" data-step="7">
+      <h2>Services</h2>
+      <div class="field">
+        <label for="id_electrical_package">Electrical Package</label>
+        {{ form.electrical_package }}
+        {% if form.electrical_package.errors %}<div class="field-errors">{{ form.electrical_package.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label for="id_water_supply">Water Supply</label>
+        {{ form.water_supply }}
+        {% if form.water_supply.errors %}<div class="field-errors">{{ form.water_supply.errors }}</div>{% endif %}
+      </div>
+      <div class="field">
+        <label>Additional Services</label>
+        <div class="checkbox-grid">{{ form.additional_services }}</div>
+        {% if form.additional_services.errors %}<div class="field-errors">{{ form.additional_services.errors }}</div>{% endif %}
+      </div>
+    </div>
+
+    <div class="wizard-actions">
+      <button type="button" id="wizard-back" class="btn-inline">Back</button>
+      <button type="button" id="wizard-next" class="btn-inline">Next</button>
+      <button type="submit" id="wizard-submit" class="btn-primary btn-inline">Save Specifications</button>
+    </div>
+  </form>
+
+  <script src="{% static 'js/formset_rows.js' %}"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      // Column/Beam rows take Main or Stirrup bars; Foundation/Slab rows take
+      // Main or Distribution. The model's clean() is the real backstop — this
+      // just keeps the per-row bar_role dropdown from offering an option the
+      // server will reject anyway, and clears/disables the structural_member
+      // picker when it isn't applicable to the selected element.
+      const BAR_ROLE_CHOICES_BY_ELEMENT = {
+        foundation: [['main', 'Main'], ['distribution', 'Distribution']],
+        slab: [['main', 'Main'], ['distribution', 'Distribution']],
+        column: [['main', 'Main'], ['stirrup', 'Stirrup/Link']],
+        beam: [['main', 'Main'], ['stirrup', 'Stirrup/Link']],
+      };
+
+      function syncReinforcementRow(row) {
+        const elementSelect = row.querySelector('[name$="-element"]');
+        const barRoleSelect = row.querySelector('[name$="-bar_role"]');
+        const memberSelect = row.querySelector('[name$="-structural_member"]');
+        if (!elementSelect || !barRoleSelect) return;
+
+        if (memberSelect) {
+          Object.keys(pendingNewMembers).forEach(function (index) {
+            if (!memberSelect.querySelector('option[value="new:' + index + '"]')) {
+              const option = document.createElement('option');
+              option.value = 'new:' + index;
+              option.textContent = pendingNewMembers[index];
+              memberSelect.appendChild(option);
+            }
+          });
+        }
+
+        function applyChoices() {
+          const choices = BAR_ROLE_CHOICES_BY_ELEMENT[elementSelect.value] || [];
+          const currentValue = barRoleSelect.value;
+          const stillValid = choices.some(function (choice) { return choice[0] === currentValue; });
+
+          barRoleSelect.innerHTML = '';
+          const blankOption = document.createElement('option');
+          blankOption.value = '';
+          blankOption.textContent = '---------';
+          barRoleSelect.appendChild(blankOption);
+          choices.forEach(function (choice) {
+            const option = document.createElement('option');
+            option.value = choice[0];
+            option.textContent = choice[1];
+            barRoleSelect.appendChild(option);
+          });
+          barRoleSelect.value = stillValid ? currentValue : '';
+
+          if (memberSelect) {
+            const needsMember = elementSelect.value === 'column' || elementSelect.value === 'beam';
+            memberSelect.disabled = !needsMember;
+            if (!needsMember) memberSelect.value = '';
+          }
+        }
+
+        elementSelect.addEventListener('change', applyChoices);
+        applyChoices();
+      }
+
+      // The Label dropdown's option text (e.g. "C1 (Column 300x300) x6") is
+      // server-rendered once from the saved StructuralMember row. If the user
+      // edits that member's label/size/type/count further down the page
+      // without saving first, the dropdown text would otherwise go stale —
+      // keep it in sync live instead.
+      const MEMBER_TYPE_DISPLAY = { column: 'Column', beam: 'Beam' };
+
+      // A member row the user just added has no database row yet, so there's
+      // no real pk for a dropdown option to point at. Stand in a "new:<row
+      // index>" placeholder option instead — the view resolves it to the real
+      // pk right after member_formset.save() runs in the same POST, so a
+      // brand-new member can be picked in the Reinforcement Schedule without
+      // a separate save first. pendingNewMembers also lets a Reinforcement
+      // row added *after* a new member already feels populated immediately.
+      const pendingNewMembers = {};
+
+      function memberFormIndex(row) {
+        const input = row.querySelector('[name^="members-"]');
+        const match = input && input.name.match(/^members-(\d+)-/);
+        return match ? match[1] : null;
+      }
+
+      function buildMemberOptionText(row) {
+        const typeSelect = row.querySelector('[name$="-member_type"]');
+        const labelInput = row.querySelector('[name$="-label"]');
+        const sizeInput = row.querySelector('[name$="-size"]');
+        const lengthInput = row.querySelector('[name$="-length_m"]');
+        const countInput = row.querySelector('[name$="-quantity_count"]');
+        const typeDisplay = MEMBER_TYPE_DISPLAY[typeSelect.value] || typeSelect.value;
+        const lengthPart = (lengthInput && lengthInput.value) ? ' x ' + lengthInput.value + 'm' : '';
+        return labelInput.value + ' (' + typeDisplay + ' ' + sizeInput.value + lengthPart + ') x' + countInput.value;
+      }
+
+      function setPendingMemberOption(index, text) {
+        pendingNewMembers[index] = text;
+        document.querySelectorAll('select[name$="-structural_member"]').forEach(function (select) {
+          let option = select.querySelector('option[value="new:' + index + '"]');
+          if (!option) {
+            option = document.createElement('option');
+            option.value = 'new:' + index;
+            select.appendChild(option);
+          }
+          option.textContent = text;
+        });
+      }
+
+      function removePendingMemberOption(index) {
+        delete pendingNewMembers[index];
+        document.querySelectorAll('select[name$="-structural_member"] option[value="new:' + index + '"]')
+          .forEach(function (option) { option.remove(); });
+      }
+
+      function syncMemberLabelOption(row) {
+        const idInput = row.querySelector('[name$="-id"]');
+        const memberId = idInput ? idInput.value : '';
+        const typeSelect = row.querySelector('[name$="-member_type"]');
+        const labelInput = row.querySelector('[name$="-label"]');
+        const sizeInput = row.querySelector('[name$="-size"]');
+        const lengthInput = row.querySelector('[name$="-length_m"]');
+        const countInput = row.querySelector('[name$="-quantity_count"]');
+        const deleteCheckbox = row.querySelector('[name$="-DELETE"]');
+        if (!typeSelect || !labelInput || !sizeInput || !countInput) return;
+
+        if (memberId) {
+          // Already saved -- a real option exists server-side; just keep its text live.
+          function updateOptionText() {
+            const typeDisplay = MEMBER_TYPE_DISPLAY[typeSelect.value] || typeSelect.value;
+            const lengthPart = (lengthInput && lengthInput.value) ? ' x ' + lengthInput.value + 'm' : '';
+            const text = labelInput.value + ' (' + typeDisplay + ' ' + sizeInput.value + lengthPart + ') x' + countInput.value;
+            document.querySelectorAll('select[name$="-structural_member"] option[value="' + memberId + '"]')
+              .forEach(function (option) { option.textContent = text; });
+          }
+          typeSelect.addEventListener('change', updateOptionText);
+          labelInput.addEventListener('input', updateOptionText);
+          sizeInput.addEventListener('input', updateOptionText);
+          countInput.addEventListener('input', updateOptionText);
+          if (lengthInput) lengthInput.addEventListener('input', updateOptionText);
+          return;
+        }
+
+        const index = memberFormIndex(row);
+        if (index === null) return;
+
+        function refresh() {
+          if ((deleteCheckbox && deleteCheckbox.checked) || !labelInput.value.trim()) {
+            removePendingMemberOption(index);
+            return;
+          }
+          setPendingMemberOption(index, buildMemberOptionText(row));
+        }
+
+        typeSelect.addEventListener('change', refresh);
+        labelInput.addEventListener('input', refresh);
+        sizeInput.addEventListener('input', refresh);
+        countInput.addEventListener('input', refresh);
+        if (lengthInput) lengthInput.addEventListener('input', refresh);
+        if (deleteCheckbox) deleteCheckbox.addEventListener('change', refresh);
+        refresh();
+      }
+
+      initFormsetTable({
+        tableId: 'reinforcement-table', addBtnId: 'add-reinforcement-btn',
+        templateId: 'empty-reinforcement-template', prefix: 'reinforcement',
+        onRowAdded: syncReinforcementRow,
+      });
+      initFormsetTable({
+        tableId: 'member-table', addBtnId: 'add-member-btn',
+        templateId: 'empty-member-template', prefix: 'members',
+        onRowAdded: syncMemberLabelOption,
+      });
+    });
+  </script>
+  <script src="{% static 'js/spec_wizard.js' %}"></script>
+{% endblock %}

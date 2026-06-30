@@ -1,0 +1,39 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Message Sent · DEE STRUCTURA AI</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32x32.png' %}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{% static 'img/favicon-16x16.png' %}">
+  <link rel="shortcut icon" href="{% static 'img/favicon.ico' %}">
+  <link rel="apple-touch-icon" href="{% static 'img/apple-touch-icon.png' %}">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}">
+  <meta http-equiv="refresh" content="0; url={{ whatsapp_url }}">
+</head>
+<body>
+  <div class="auth-page">
+    <div class="auth-card">
+      <h1><span class="brand">DEE STRUCTURA AI</span></h1>
+      <div class="subtitle">Thanks — your message has been received.</div>
+      <p style="color: var(--text-dim); font-size: 14px; margin-bottom: 20px;">
+        Taking you to WhatsApp now with your message already filled in — just tap Send.
+        If nothing happens, tap the button below.
+      </p>
+      <a href="{{ whatsapp_url }}" class="btn-primary" style="display:block; text-align:center; text-decoration:none;">
+        Open WhatsApp
+      </a>
+      <div class="auth-footer">
+        {% if user.is_authenticated %}
+          <a href="{% url 'projects:dashboard' %}">Back to dashboard</a>
+        {% else %}
+          <a href="{% url 'accounts:login' %}">Back to log in</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <script>
+    window.location.href = "{{ whatsapp_url|escapejs }}";
+  </script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Edit BOQ Line Items · {{ project.name }} · DEE STRUCTURA AI{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <h1>Edit Line Items — {{ project.name }}</h1>
+    <a href="{% url 'beme:detail' project.pk %}" class="btn-inline">Back to BOQ</a>
+  </div>
+  <p class="empty-state">
+    Correct any quantity, rate, or material that doesn't match real workmanship/market prices, or add a
+    material the estimate missed. Amounts recalculate from Qty × Rate when you save. Totals on the BOQ
+    document update automatically.
+  </p>
+
+  <form method="post">
+    {% csrf_token %}
+
+    {% for entry in entries %}
+    <div class="boq-element-edit" style="margin-bottom: 32px;">
+      <h2>ELEMENT NO. {{ entry.element.element_number }} — {{ entry.element.title|upper }}</h2>
+      {{ entry.formset.management_form }}
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Description</th>
+            <th>Qty</th>
+            <th>Unit</th>
+            <th>Rate (₦)</th>
+            <th>Amount (₦)</th>
+            <th>Remove</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for form in entry.formset %}
+          {% if form.non_field_errors %}
+          <tr><td colspan="7" class="field-errors">{{ form.non_field_errors }}</td></tr>
+          {% endif %}
+          <tr class="line-item-row">
+            {{ form.id }}
+            <td>{{ form.instance.item_label }}</td>
+            {% if form.instance.is_section_header %}
+            <td colspan="4">{{ form.description }}</td>
+            <td class="num">—</td>
+            {% elif form.instance.is_provisional_sum %}
+            <td>{{ form.description }}</td>
+            <td colspan="2" class="empty-state">Provisional sum</td>
+            <td>{{ form.amount }}</td>
+            {% else %}
+            <td>{{ form.description }}</td>
+            <td>{{ form.qty }}</td>
+            <td>{{ form.unit }}</td>
+            <td>{{ form.rate }}</td>
+            <td class="num line-amount">{{ form.instance.amount|default:"0"|floatformat:0 }}</td>
+            {% endif %}
+            <td class="delete-cell">
+              {{ form.DELETE }}
+              <button type="button" class="remove-line-btn btn-inline">Remove</button>
+            </td>
+          </tr>
+          {% if form.qty.errors or form.rate.errors or form.amount.errors %}
+          <tr><td colspan="7" class="field-errors">
+            {{ form.qty.errors }} {{ form.rate.errors }} {{ form.amount.errors }}
+          </td></tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="button" class="add-line-btn btn-inline" style="margin-top: 8px;">+ Add Line</button>
+
+      <template class="empty-line-template">
+        <tr class="line-item-row">
+          {{ entry.formset.empty_form.id }}
+          <td></td>
+          <td>{{ entry.formset.empty_form.description }}</td>
+          <td>{{ entry.formset.empty_form.qty }}</td>
+          <td>{{ entry.formset.empty_form.unit }}</td>
+          <td>{{ entry.formset.empty_form.rate }}</td>
+          <td class="num line-amount">0</td>
+          <td class="delete-cell">
+            {{ entry.formset.empty_form.DELETE }}
+            <button type="button" class="remove-line-btn btn-inline">Remove</button>
+          </td>
+        </tr>
+      </template>
+    </div>
+    {% endfor %}
+
+    <div class="form-actions">
+      <button type="submit" class="btn-primary btn-inline">Save Changes</button>
+      <a href="{% url 'beme:detail' project.pk %}" class="btn-inline">Cancel</a>
+    </div>
+  </form>
+
+  <script src="{% static 'js/boq_edit.js' %}"></script>
+{% endblock %}
