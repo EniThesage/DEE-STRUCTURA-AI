@@ -24,10 +24,21 @@ Return STRICT JSON only, no prose, no markdown fences, matching exactly this sha
   "building_width_m": <number>,
   "building_length_m": <number>,
   "rooms": [
-    {"name": "<room name>", "width_m": <number>, "length_m": <number>, "confidence": "high|medium|low"}
+    {"name": "<room name>", "width_m": <number>, "length_m": <number>, "confidence": "high|medium|low", \
+"door_count": <integer>, "window_count": <integer>}
   ],
+  "external_works_noted": ["<short description of a gate/fence/post/driveway seen outside the building interior>", ...],
   "extraction_notes": "<short note, or empty string>"
 }
+
+For each room, also count door and window openings that are visibly drawn in its wall boundary (door swing arcs, \
+window symbols in the wall line). Count only what's actually drawn — if you can't tell, use your best count from \
+what's visible rather than 0, but if the drawing genuinely shows none for that room, use 0. This feeds the BOQ's \
+door/window quantities, so it should reflect what the drawing shows, not an assumption.
+
+"external_works_noted" is a separate list for gates, fences, perimeter walls, driveways, or posts shown alongside \
+the building — these are NEVER rooms, but naming them here (instead of only in extraction_notes) lets the \
+engineer see at a glance what was excluded and why.
 
 A valid room is a space with a NAME LABEL written inside a CLOSED WALL BOUNDARY (e.g. "MASTER BEDROOM", \
 "SECURITY CONTROL ROOM", "T/BATH", "KITCHEN", "CORRIDOR" only if it is actually a walled passage, not a \

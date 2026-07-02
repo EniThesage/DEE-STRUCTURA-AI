@@ -3,7 +3,31 @@
 {% block title %}Review Rooms · {{ project.name }}{% endblock %}
 {% block content %}
   <h1>Review Rooms — {{ project.name }}</h1>
-  <p class="empty-state">Edit dimensions, add missing rooms, or remove ones that don't belong. Area recalculates automatically. Any row you add or edit here will be marked "Manual" confidence once saved, since it's your input rather than an AI estimate.</p>
+  <p class="empty-state">Edit dimensions, add missing rooms, or remove ones that don't belong. Area recalculates automatically. Any row you add or edit here will be marked "Manual" confidence once saved, since it's your input rather than an AI estimate. Saving this page also confirms the extraction for the BOQ engine — a BOQ can't be generated until it's been reviewed here.</p>
+
+  {% if excluded_candidates %}
+  <div class="empty-state" style="border-left: 3px solid #c99;">
+    <strong>Excluded from rooms (not added below):</strong>
+    <ul>
+      {% for item in excluded_candidates %}<li>{{ item.label }} — {{ item.reason }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if external_works_noted %}
+  <div class="empty-state">
+    <strong>External works noted on the drawing (not part of the building, not priced here):</strong>
+    <ul>
+      {% for note in external_works_noted %}<li>{{ note }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if area_mismatch_pct and area_mismatch_pct > area_mismatch_warning_pct %}
+  <div class="empty-state" style="border-left: 3px solid #c99;">
+    <strong>Warning:</strong> total room area is {{ area_mismatch_pct|floatformat:0 }}% off from the confirmed building footprint. Double-check the rooms and footprint below before generating a BOQ.
+  </div>
+  {% endif %}
 
   <form method="post" id="room-formset">
     {% csrf_token %}
@@ -31,6 +55,8 @@
           <th>Width (m)</th>
           <th>Length (m)</th>
           <th>Area (m²)</th>
+          <th>Doors</th>
+          <th>Windows</th>
           <th>Remove</th>
         </tr>
       </thead>
@@ -42,6 +68,8 @@
           <td>{{ form.width }}</td>
           <td>{{ form.length }}</td>
           <td class="room-area">{{ form.instance.area|default:"0.00" }}</td>
+          <td>{{ form.door_count }}</td>
+          <td>{{ form.window_count }}</td>
           <td class="delete-cell">
             {{ form.DELETE }}
             <button type="button" class="remove-room-btn btn-inline">Remove</button>
@@ -52,7 +80,7 @@
     </table>
     <div class="form-actions">
       <button type="button" id="add-room-btn" class="btn-inline">+ Add Room</button>
-      <button type="submit" class="btn-primary btn-inline">Save Rooms</button>
+      <button type="submit" class="btn-primary btn-inline">Save &amp; Confirm Rooms</button>
     </div>
   </form>
 
@@ -63,6 +91,8 @@
       <td>{{ formset.empty_form.width }}</td>
       <td>{{ formset.empty_form.length }}</td>
       <td class="room-area">0.00</td>
+      <td>{{ formset.empty_form.door_count }}</td>
+      <td>{{ formset.empty_form.window_count }}</td>
       <td class="delete-cell">
         {{ formset.empty_form.DELETE }}
         <button type="button" class="remove-room-btn btn-inline">Remove</button>

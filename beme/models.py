@@ -57,6 +57,12 @@ class BEMELineItem(models.Model):
     is_section_header = models.BooleanField(default=False)
     is_provisional_sum = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
+    quantity_formula = models.TextField(
+        blank=True, help_text='Human-readable formula that produced qty, e.g. "perimeter 26.0m x height 3.0m - openings 8.4m2".',
+    )
+    source_note = models.TextField(
+        blank=True, help_text='Where each input in the formula came from, e.g. "perimeter: confirmed rooms; height: wizard".',
+    )
 
     class Meta:
         ordering = ['sort_order']

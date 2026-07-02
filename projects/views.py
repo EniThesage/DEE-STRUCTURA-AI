@@ -6,24 +6,33 @@ from django.db import transaction
 from django.forms import modelformset_factory
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse_lazy
+from django.utils import timezone
 from django.views import View
 from django.views.generic import CreateView, DeleteView, DetailView, TemplateView
 
 from beme.models import BEMEDocument
 
 from .forms import (
-    FloorPlanUploadForm, ProjectFootprintForm, ProjectForm, ProjectSpecForm, ReinforcementSpecFormSet,
+    ProjectDrawingUploadForm, ProjectFootprintForm, ProjectForm, ProjectSpecForm, ReinforcementSpecFormSet,
     StructuralMemberFormSet,
 )
-from .models import Project, Room
+from .models import Project, ProjectDrawing, Room
 from .services import ExtractionError, extract_rooms_from_floor_plan
 
 RoomFormSet = modelformset_factory(
     Room,
-    fields=['name', 'width', 'length'],
+    fields=['name', 'width', 'length', 'door_count', 'window_count'],
     extra=1,
     can_delete=True,
 )
+
+# Both dimensions under this are almost certainly a structural post/store, not
+# a room. Aspect ratio over this is almost certainly a dimension-line/corridor
+# misread. Either way: excluded from Room creation, surfaced to the engineer
+# via ProjectDrawing.extraction_flags instead of silently becoming a room.
+MIN_ROOM_DIMENSION_M = Decimal('1.2')
+MAX_ROOM_ASPECT_RATIO = 12
+AREA_MISMATCH_WARNING_PCT = 40
 
 
 def _safe_decimal(value):
@@ -89,33 +98,48 @@ class ProjectDetailView(LoginRequiredMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context['upload_form'] = FloorPlanUploadForm()
-        context['floor_plans'] = self.object.floor_plans.all()
+        context['upload_form'] = ProjectDrawingUploadForm()
+        context['drawings'] = self.object.drawings.all()
         context['rooms'] = self.object.rooms.all()
         context['spec'] = getattr(self.object, 'spec', None)
         return context
 
 
-class FloorPlanUploadView(LoginRequiredMixin, View):
+class ProjectDrawingUploadView(LoginRequiredMixin, View):
     def post(self, request, pk):
         project = get_object_or_404(Project, pk=pk, user=request.user)
-        form = FloorPlanUploadForm(request.POST, request.FILES)
+        form = ProjectDrawingUploadForm(request.POST, request.FILES)
 
         if not form.is_valid():
             messages.error(request, 'Please upload a valid PDF, JPG, PNG, or WEBP file.')
             return redirect('projects:detail', pk=project.pk)
 
-        floor_plan = form.save(commit=False)
-        floor_plan.project = project
-        floor_plan.extraction_status = 'processing'
-        floor_plan.save()
+        drawing = form.save(commit=False)
+        drawing.project = project
+
+        # Only the architectural pass is wired up so far — other disciplines
+        # are stored for reference so the schema/UI is ready when their
+        # extraction passes land, rather than silently pretending to process them.
+        if drawing.discipline != 'architectural':
+            drawing.extraction_status = 'pending'
+            drawing.notes = 'Automatic extraction for this discipline is not available yet — file stored for reference.'
+            drawing.save()
+            messages.info(
+                request,
+                f'{drawing.get_discipline_display()} drawing uploaded. Automatic extraction for this '
+                'discipline is coming in a later update — the file is saved for reference.',
+            )
+            return redirect('projects:detail', pk=project.pk)
+
+        drawing.extraction_status = 'processing'
+        drawing.save()
 
         try:
-            data = extract_rooms_from_floor_plan(floor_plan.file.path)
+            data = extract_rooms_from_floor_plan(drawing.file.path)
         except ExtractionError as exc:
-            floor_plan.extraction_status = 'failed'
-            floor_plan.extraction_error = str(exc)
-            floor_plan.save()
+            drawing.extraction_status = 'failed'
+            drawing.extraction_error = str(exc)
+            drawing.save()
             messages.warning(request, str(exc))
             return redirect('projects:detail', pk=project.pk)
 
@@ -126,38 +150,68 @@ class FloorPlanUploadView(LoginRequiredMixin, View):
             project.footprint_length_m = footprint_length
             project.save(update_fields=['footprint_width_m', 'footprint_length_m'])
 
-        rooms = data.get('rooms', [])
-        flagged_count = 0
-        for room in rooms:
+        rooms_data = data.get('rooms', [])
+        excluded_candidates = []
+        created_count = 0
+        for room in rooms_data:
             width = room.get('width_m') or 0
             length = room.get('length_m') or 0
             name = room.get('name') or 'Room'
             confidence = room.get('confidence') or 'medium'
+            door_count = int(room.get('door_count') or 0)
+            window_count = int(room.get('window_count') or 0)
 
-            # A room with both dimensions under ~1.2m almost certainly isn't a
-            # room at all — it's a structural column/post/pier the vision model
-            # mistook for an enclosed space. Don't silently accept it as floor
-            # area; flag it for manual review instead.
-            if width and length and width < 1.2 and length < 1.2:
-                name = f'{name} (check: looks like a column/post, not a room)'
-                confidence = 'low'
-                flagged_count += 1
+            dims = sorted([_safe_decimal(width) or Decimal('0'), _safe_decimal(length) or Decimal('0')])
+            if dims[1] > 0 and dims[1] < MIN_ROOM_DIMENSION_M:
+                excluded_candidates.append({
+                    'label': name,
+                    'reason': 'both dimensions under 1.2m — possible structural post/store, not a room',
+                })
+                continue
+            if dims[0] > 0 and (dims[1] / dims[0]) > MAX_ROOM_ASPECT_RATIO:
+                excluded_candidates.append({
+                    'label': name,
+                    'reason': 'aspect ratio over 12:1 — possible corridor misread / dimension-line artifact',
+                })
+                continue
 
             Room.objects.create(
                 project=project,
+                source_drawing=drawing,
                 name=name,
                 width=width,
                 length=length,
+                door_count=door_count,
+                window_count=window_count,
                 confidence=confidence,
                 is_manual=False,
             )
+            created_count += 1
 
-        floor_plan.extraction_status = 'completed'
-        floor_plan.save()
+        area_mismatch_pct = None
+        if footprint_width and footprint_length and footprint_width * footprint_length > 0:
+            footprint_area = footprint_width * footprint_length
+            total_room_area = sum(
+                ((_safe_decimal(r.get('width_m')) or Decimal('0')) * (_safe_decimal(r.get('length_m')) or Decimal('0'))
+                 for r in rooms_data),
+                Decimal('0'),
+            )
+            area_mismatch_pct = abs(total_room_area - footprint_area) / footprint_area * 100
 
-        notice = f'Extracted {len(rooms)} rooms from the floor plan.'
-        if flagged_count:
-            notice += f' {flagged_count} flagged as possible structural elements — please review before generating a BOQ.'
+        drawing.extraction_flags = {
+            'excluded_candidates': excluded_candidates,
+            'external_works_noted': data.get('external_works_noted') or [],
+            'area_mismatch_pct': float(area_mismatch_pct) if area_mismatch_pct is not None else None,
+        }
+        drawing.extraction_status = 'completed'
+        drawing.save()
+
+        notice = f'Extracted {created_count} rooms from the drawing.'
+        if excluded_candidates:
+            notice += (
+                f' {len(excluded_candidates)} item(s) excluded as likely non-room elements '
+                '(see notes on the Review Rooms page).'
+            )
         if footprint_width and footprint_length:
             notice += f' Detected building footprint {footprint_width}m x {footprint_length}m — confirm it on the Review Rooms page.'
         else:
@@ -170,13 +224,43 @@ class FloorPlanUploadView(LoginRequiredMixin, View):
 
 
 class RoomReviewView(LoginRequiredMixin, View):
+    """Doubles as the mandatory confirmation gate for architectural drawings —
+    saving this page marks every architectural ProjectDrawing on the project
+    reviewed, which generate_beme() requires before it will run."""
+
+    def _extraction_notices(self, project):
+        drawings = project.drawings.filter(discipline='architectural')
+        excluded_candidates = []
+        external_works_noted = []
+        for drawing in drawings:
+            excluded_candidates += drawing.extraction_flags.get('excluded_candidates', [])
+            external_works_noted += drawing.extraction_flags.get('external_works_noted', [])
+        return excluded_candidates, external_works_noted
+
+    def _area_mismatch_pct(self, project):
+        if not (project.footprint_width_m and project.footprint_length_m):
+            return None
+        footprint_area = project.footprint_width_m * project.footprint_length_m
+        if footprint_area <= 0:
+            return None
+        total_room_area = sum((room.area for room in project.rooms.all()), Decimal('0'))
+        return abs(total_room_area - footprint_area) / footprint_area * 100
+
+    def _context(self, project, formset, footprint_form):
+        excluded_candidates, external_works_noted = self._extraction_notices(project)
+        return {
+            'project': project, 'formset': formset, 'footprint_form': footprint_form,
+            'excluded_candidates': excluded_candidates,
+            'external_works_noted': external_works_noted,
+            'area_mismatch_pct': self._area_mismatch_pct(project),
+            'area_mismatch_warning_pct': AREA_MISMATCH_WARNING_PCT,
+        }
+
     def get(self, request, pk):
         project = get_object_or_404(Project, pk=pk, user=request.user)
         formset = RoomFormSet(queryset=Room.objects.filter(project=project), prefix='rooms')
         footprint_form = ProjectFootprintForm(instance=project)
-        return render(request, 'projects/room_review.html', {
-            'project': project, 'formset': formset, 'footprint_form': footprint_form,
-        })
+        return render(request, 'projects/room_review.html', self._context(project, formset, footprint_form))
 
     def post(self, request, pk):
         project = get_object_or_404(Project, pk=pk, user=request.user)
@@ -198,12 +282,13 @@ class RoomReviewView(LoginRequiredMixin, View):
                 instance.confidence = 'manual'
                 instance.save()
             footprint_form.save()
-            messages.success(request, 'Rooms updated.')
+            ProjectDrawing.objects.filter(project=project, discipline='architectural').update(
+                reviewed=True, reviewed_at=timezone.now(),
+            )
+            messages.success(request, 'Rooms updated and confirmed.')
             return redirect('projects:detail', pk=project.pk)
 
-        return render(request, 'projects/room_review.html', {
-            'project': project, 'formset': formset, 'footprint_form': footprint_form,
-        })
+        return render(request, 'projects/room_review.html', self._context(project, formset, footprint_form))
 
 
 class ProjectSpecView(LoginRequiredMixin, View):

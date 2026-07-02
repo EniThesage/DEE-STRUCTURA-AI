@@ -23,6 +23,12 @@ BAR_UNIT_WEIGHT_KG_PER_M = {
 BEAM_DEFAULT_SPAN_M = Decimal('4.0')  # assumed average span when only a beam count is given, not a layout
 FOOTING_ASSUMED_DEPTH_M = Decimal('0.225')  # used only to convert a foundation reinforcement schedule to kg/m³
 
+# Standard opening sizes used to deduct door/window area from gross wall
+# area, once real door/window counts are confirmed per room (Review Rooms
+# page) — replaces a flat "15% of gross wall area" opening guess.
+DOOR_AREA_M2 = Decimal('2.10')  # ~1.0m x 2.1m single door
+WINDOW_AREA_M2 = Decimal('1.44')  # ~1.2m x 1.2m standard window
+
 ROOF_MATERIAL_BY_TYPE = {
     'long_span_aluminum': 'Long Span Aluminium Roofing Sheet',
     'aluminum_step_tile': 'Aluminium Step Tile Roofing Sheet',
@@ -177,6 +183,22 @@ def _ceil_decimal(value):
     return Decimal(math.ceil(value))
 
 
+def _provisional_item(description, reason):
+    """A line item for a quantity that genuinely can't be calculated yet —
+    the required input was never extracted, confirmed, or answered. Amount is
+    left blank (not guessed) so it's visibly unpriced until the engineer
+    either supplies the missing input and regenerates, or prices it directly
+    on the Edit Line Items page."""
+    return {
+        'description': description,
+        'unit': 'sum',
+        'amount': None,
+        'is_provisional_sum': True,
+        'formula': 'Not calculated — see source note.',
+        'source': reason,
+    }
+
+
 def _parse_size_to_area_m2(size):
     """Parse a free-text member size like "225x225" or "225 x 450mm" into m².
     Returns None if it can't be parsed (caller should fall back to a flat ratio)."""
@@ -321,6 +343,11 @@ def _reinforcement_line(description, kg_qty, bar_code, material_for):
 
 
 def generate_beme(project):
+    if project.drawings.filter(discipline='architectural', reviewed=False).exists():
+        raise BEMEGenerationError(
+            'Review and confirm the extracted rooms on the Review Rooms page before generating a BOQ.'
+        )
+
     rooms = list(project.rooms.all())
     if not rooms:
         raise BEMEGenerationError('Add rooms to this project before generating a BOQ.')
@@ -375,47 +402,60 @@ def _compute_metrics(rooms, spec):
     # genuinely has zero wet-room plumbing scope (e.g. a standalone sitting room).
     wet_room_count = sum(1 for room in rooms if any(k in room.name.lower() for k in WET_ROOM_KEYWORDS))
 
-    # Prefer the real footprint (from floor plan extraction, confirmed/edited
-    # on the Review Rooms page) for the perimeter used in trench/wall-length
-    # ratios. Only fall back to approximating it as a 1.3 length:width
-    # rectangle when no footprint has been captured for this project.
+    # Perimeter only comes from a confirmed footprint (set on the Review Rooms
+    # page, usually pre-filled from floor plan extraction). No aspect-ratio
+    # estimate fallback — a guessed footprint is exactly the kind of
+    # fabricated base quantity this engine no longer produces. Every
+    # perimeter-dependent item below routes to a provisional sum instead when
+    # this is None.
     project = spec.project
     if project.footprint_width_m and project.footprint_length_m:
         perimeter = 2 * (project.footprint_width_m + project.footprint_length_m)
+        perimeter_source = f'confirmed footprint {project.footprint_width_m}m x {project.footprint_length_m}m'
     else:
-        aspect = Decimal('1.3')
-        width_m = (total_area / aspect).sqrt()
-        length_m = total_area / width_m
-        perimeter = 2 * (length_m + width_m)
+        perimeter = None
+        perimeter_source = None
+
+    # Door/window counts come from confirmed Room fields (extracted, then
+    # reviewed/edited on the Review Rooms page) rather than a "1 opening per
+    # room" guess. A combined total of 0 means the counts were never
+    # populated or confirmed — treated as unconfirmed, not as "this building
+    # genuinely has no doors or windows".
+    door_count = sum(room.door_count for room in rooms)
+    window_count = sum(room.window_count for room in rooms)
+    openings_confirmed = (door_count + window_count) > 0
+    openings_area = (Decimal(door_count) * DOOR_AREA_M2) + (Decimal(window_count) * WINDOW_AREA_M2)
 
     wall_height = spec.wall_height
-    gross_external_wall_area = perimeter * wall_height
-    external_wall_area = gross_external_wall_area * Decimal('0.85')  # 15% opening deduction
-
-    if room_count > 1:
-        internal_wall_length = total_area * Decimal('0.5')  # m of partition per m² floor, rough residential ratio
-        internal_wall_area = internal_wall_length * wall_height * Decimal('0.9')  # 10% opening deduction
+    if perimeter is not None:
+        gross_external_wall_area = perimeter * wall_height
+        external_wall_area = gross_external_wall_area - (openings_area if openings_confirmed else Decimal('0'))
     else:
-        # A single room has no other room to partition from.
-        internal_wall_area = Decimal('0')
+        external_wall_area = None
+
+    # Internal partition wall length has no confirmed source yet — interior
+    # wall extraction isn't built until a later phase, and there's no wizard
+    # question for it either. Always provisional now, never a ratio guess.
+    internal_wall_area = None
 
     roof_pitch_deg = min(float(spec.roof_pitch), 60.0)
     roof_slope_factor = Decimal(str(1 / math.cos(math.radians(roof_pitch_deg))))
-    roof_area = total_area * roof_slope_factor * Decimal('1.15')  # 15% eaves/overhang allowance
-
-    # A single-room structure's entrance door doubles as the room door.
-    door_count = room_count if room_count <= 1 else room_count + 1
+    roof_area = total_area * roof_slope_factor * Decimal('1.15')  # 15% eaves/overhang allowance, on confirmed area
 
     return {
         'total_area': total_area,
         'room_count': room_count,
         'wet_room_count': wet_room_count,
         'perimeter': perimeter,
+        'perimeter_source': perimeter_source,
+        'wall_height': wall_height,
         'external_wall_area': external_wall_area,
         'internal_wall_area': internal_wall_area,
         'roof_area': roof_area,
         'door_count': door_count,
-        'window_count': room_count,
+        'window_count': window_count,
+        'openings_confirmed': openings_confirmed,
+        'openings_area': openings_area,
     }
 
 
@@ -428,89 +468,145 @@ FOUNDATION_VOLUME_PER_METRE = {
 
 def _substructure_items(spec, metrics, rate_for, material_for, reinforcement_specs):
     perimeter = metrics['perimeter']
+    perimeter_source = metrics['perimeter_source']
     total_area = metrics['total_area']
     trench_width = Decimal('0.6')
 
-    excavation_volume = perimeter * trench_width * spec.excavation_depth
-    hardcore_volume = total_area * Decimal('0.15')
-    blinding_volume = perimeter * trench_width * Decimal('0.05')
+    items = [{'description': 'Excavation & Earth Work', 'is_section_header': True}]
+    items.append({
+        'description': 'Site clearance and setting out',
+        'unit': 'sum',
+        'amount': _money(total_area * Decimal('500')),
+        'is_provisional_sum': True,
+        'formula': f'allowance: total floor area {_qty(total_area)}m² x standard ₦500/m²',
+        'source': 'total floor area: confirmed rooms',
+    })
 
-    if spec.foundation_type == 'raft':
-        footing_volume = total_area * Decimal('0.15')
-    else:
-        footing_volume = perimeter * FOUNDATION_VOLUME_PER_METRE.get(spec.foundation_type, Decimal('0.30'))
-
-    # Use the project's foundation reinforcement schedule if one was entered
-    # (real mesh density from bar size + spacing); otherwise a flat ratio.
-    density = _mesh_density_kg_per_m3(reinforcement_specs, 'foundation', FOOTING_ASSUMED_DEPTH_M)
-    reinforcement_kg = footing_volume * (density if density is not None else Decimal('40'))
-    formwork_area = perimeter * Decimal('0.6')
-
-    foundation_bar_label = _member_bar_size_display(reinforcement_specs, ('foundation',)) or DEFAULT_BAR_SIZE_FLAG
-    foundation_bar_code = _member_bar_size_code(reinforcement_specs, ('foundation',)) or DEFAULT_BAR_SIZE_CODE
-
-    reinforcement_item, reinforcement_amount = _reinforcement_line(
-        f'High yield reinforcement bars ({foundation_bar_label}) to foundation',
-        reinforcement_kg, foundation_bar_code, material_for,
-    )
-    binding_wire_amount = _money(reinforcement_amount * BINDING_WIRE_PERCENT_OF_STEEL_COST / Decimal('100'))
-
-    items = [
-        {'description': 'Excavation & Earth Work', 'is_section_header': True},
-        {
-            'description': 'Site clearance and setting out',
-            'unit': 'sum',
-            'amount': _money(total_area * Decimal('500')),
-            'is_provisional_sum': True,
-        },
-        {
+    if perimeter is not None:
+        excavation_volume = perimeter * trench_width * spec.excavation_depth
+        items.append({
             'description': f'Excavate foundation trenches to {spec.excavation_depth}m depth',
             'qty': _qty(excavation_volume),
             'unit': 'm³',
             'rate': rate_for('Excavation in Foundation Trenches (mechanical)'),
-        },
-        {
-            'description': 'Hardcore filling and ramming to make up levels, 150mm thick',
-            'qty': _qty(hardcore_volume),
-            'unit': 'm³',
-            'rate': rate_for('Hardcore Filling and Ramming'),
-        },
-        {
-            'description': 'Anti-termite treatment to substructure',
-            'unit': 'sum',
-            'amount': _money(total_area * Decimal('350')),
-            'is_provisional_sum': True,
-        },
-        {'description': 'Concrete Work', 'is_section_header': True},
-        {
+            'formula': f'perimeter {_qty(perimeter)}m x trench width {trench_width}m x depth {spec.excavation_depth}m '
+                       f'= {_qty(excavation_volume)}m³',
+            'source': f'perimeter: {perimeter_source}; trench width: standard 0.6m; depth: wizard specification',
+        })
+    else:
+        items.append(_provisional_item(
+            'Excavate foundation trenches — provisional',
+            'building footprint not confirmed — enter it on Review Rooms and regenerate for a real trench volume',
+        ))
+
+    hardcore_volume = total_area * Decimal('0.15')
+    items.append({
+        'description': 'Hardcore filling and ramming to make up levels, 150mm thick',
+        'qty': _qty(hardcore_volume),
+        'unit': 'm³',
+        'rate': rate_for('Hardcore Filling and Ramming'),
+        'formula': f'total floor area {_qty(total_area)}m² x 0.15m thickness = {_qty(hardcore_volume)}m³',
+        'source': 'total floor area: confirmed rooms',
+    })
+    items.append({
+        'description': 'Anti-termite treatment to substructure',
+        'unit': 'sum',
+        'amount': _money(total_area * Decimal('350')),
+        'is_provisional_sum': True,
+        'formula': f'allowance: total floor area {_qty(total_area)}m² x standard ₦350/m²',
+        'source': 'total floor area: confirmed rooms',
+    })
+
+    items.append({'description': 'Concrete Work', 'is_section_header': True})
+    if perimeter is not None:
+        blinding_volume = perimeter * trench_width * Decimal('0.05')
+        items.append({
             'description': 'Mass concrete (1:3:6) blinding to foundation',
             'qty': _qty(blinding_volume),
             'unit': 'm³',
             'rate': rate_for('Mass Concrete 1:3:6 (Blinding)'),
-        },
-    ]
-    items += _concrete_material_lines(
-        footing_volume, spec.concrete_grade, rate_for,
-        context=f'foundation footing ({spec.get_foundation_type_display()}), '
-                f'Grade {spec.get_concrete_grade_display()}',
-    )
-    items += [
-        {'description': 'Reinforcement', 'is_section_header': True},
-        reinforcement_item,
-        {
+            'formula': f'perimeter {_qty(perimeter)}m x trench width {trench_width}m x 0.05m = {_qty(blinding_volume)}m³',
+            'source': f'perimeter: {perimeter_source}',
+        })
+    else:
+        items.append(_provisional_item(
+            'Mass concrete blinding to foundation — provisional',
+            'building footprint not confirmed — perimeter needed for blinding volume',
+        ))
+
+    footing_volume = None
+    footing_formula = footing_source = None
+    if spec.foundation_type == 'raft':
+        footing_volume = total_area * Decimal('0.15')
+        footing_formula = f'total floor area {_qty(total_area)}m² x 0.15m raft thickness = {_qty(footing_volume)}m³'
+        footing_source = 'total floor area: confirmed rooms'
+    elif perimeter is not None:
+        ratio = FOUNDATION_VOLUME_PER_METRE.get(spec.foundation_type, Decimal('0.30'))
+        footing_volume = perimeter * ratio
+        footing_formula = (
+            f'perimeter {_qty(perimeter)}m x {ratio}m³/m standard {spec.get_foundation_type_display()} yield '
+            f'= {_qty(footing_volume)}m³'
+        )
+        footing_source = f'perimeter: {perimeter_source}'
+
+    if footing_volume is not None:
+        concrete_lines = _concrete_material_lines(
+            footing_volume, spec.concrete_grade, rate_for,
+            context=f'foundation footing ({spec.get_foundation_type_display()}), '
+                    f'Grade {spec.get_concrete_grade_display()}',
+        )
+        for line in concrete_lines:
+            line['formula'] = footing_formula
+            line['source'] = footing_source
+        items += concrete_lines
+
+        density = _mesh_density_kg_per_m3(reinforcement_specs, 'foundation', FOOTING_ASSUMED_DEPTH_M)
+        reinforcement_kg = footing_volume * (density if density is not None else Decimal('40'))
+        foundation_bar_label = _member_bar_size_display(reinforcement_specs, ('foundation',)) or DEFAULT_BAR_SIZE_FLAG
+        foundation_bar_code = _member_bar_size_code(reinforcement_specs, ('foundation',)) or DEFAULT_BAR_SIZE_CODE
+
+        reinforcement_item, reinforcement_amount = _reinforcement_line(
+            f'High yield reinforcement bars ({foundation_bar_label}) to foundation',
+            reinforcement_kg, foundation_bar_code, material_for,
+        )
+        density_note = 'confirmed reinforcement schedule' if density is not None else 'standard 40kg/m³ default — verify'
+        reinforcement_item['formula'] = f'footing volume {_qty(footing_volume)}m³ x mesh density ({density_note})'
+        reinforcement_item['source'] = f'footing volume: see above; reinforcement density: {density_note}'
+        binding_wire_amount = _money(reinforcement_amount * BINDING_WIRE_PERCENT_OF_STEEL_COST / Decimal('100'))
+
+        items.append({'description': 'Reinforcement', 'is_section_header': True})
+        items.append(reinforcement_item)
+        items.append({
             'description': 'Binding wire (allowance, % of reinforcement cost)',
             'unit': 'sum',
             'amount': binding_wire_amount,
             'is_provisional_sum': True,
-        },
-        {'description': 'Formwork', 'is_section_header': True},
-        {
+            'formula': f'{BINDING_WIRE_PERCENT_OF_STEEL_COST}% of reinforcement cost',
+            'source': 'reinforcement cost: see above',
+        })
+    else:
+        items.append({'description': 'Reinforcement', 'is_section_header': True})
+        items.append(_provisional_item(
+            'Foundation concrete and reinforcement — provisional',
+            f'building footprint not confirmed — perimeter needed for {spec.get_foundation_type_display()} footing volume',
+        ))
+
+    items.append({'description': 'Formwork', 'is_section_header': True})
+    if perimeter is not None:
+        formwork_area = perimeter * Decimal('0.6')
+        items.append({
             'description': 'Formwork to foundation edges',
             'qty': _qty(formwork_area),
             'unit': 'm²',
             'rate': rate_for('Formwork to Concrete Edges'),
-        },
-    ]
+            'formula': f'perimeter {_qty(perimeter)}m x 0.6m = {_qty(formwork_area)}m²',
+            'source': f'perimeter: {perimeter_source}',
+        })
+    else:
+        items.append(_provisional_item(
+            'Formwork to foundation edges — provisional', 'building footprint not confirmed',
+        ))
+
     return items
 
 
@@ -545,43 +641,63 @@ def _superstructure_items(spec, metrics, rate_for, material_for, reinforcement_s
     perimeter = metrics['perimeter']
     framed = spec.frame_type == 'framed'
 
-    column_beam_volume = Decimal('0')
+    column_beam_volume = None
+    column_beam_source = None
     if framed:
         column_beam_volume = _column_beam_volume_from_members(structural_members, spec.wall_height)
-        if column_beam_volume is None:
-            column_beam_volume = total_area * Decimal('0.04')  # flat fallback ratio
+        if column_beam_volume is not None:
+            column_beam_source = 'structural member schedule (size x count x length)'
 
     slab_thickness_m = spec.slab_thickness / Decimal('1000')
     slab_volume = total_area * slab_thickness_m
-    total_concrete_volume = column_beam_volume + slab_volume
+    combined_volume = slab_volume + (column_beam_volume or Decimal('0'))
+
+    member_desc = 'columns, beams and suspended floor slab' if column_beam_volume is not None else 'suspended floor slab'
+    items = [{'description': 'Concrete Work', 'is_section_header': True}]
+    concrete_lines = _concrete_material_lines(
+        combined_volume, spec.concrete_grade, rate_for,
+        context=f'{member_desc} ({spec.slab_thickness}mm), Grade {spec.get_concrete_grade_display()}',
+    )
+    formula = f'slab: floor area {_qty(total_area)}m² x {slab_thickness_m}m = {_qty(slab_volume)}m³'
+    source = 'floor area: confirmed rooms; slab thickness: wizard'
+    if column_beam_volume is not None:
+        formula += f'; columns/beams: {_qty(column_beam_volume)}m³ from structural member schedule'
+        source += f'; columns/beams: {column_beam_source}'
+    for line in concrete_lines:
+        line['formula'] = formula
+        line['source'] = source
+    items += concrete_lines
+
+    if framed and column_beam_volume is None:
+        items.append(_provisional_item(
+            'Concrete columns and beams — provisional',
+            'framed structure selected but no structural member schedule entered — add columns/beams under '
+            'Specifications, or this needs pricing separately',
+        ))
 
     slab_density = _mesh_density_kg_per_m3(reinforcement_specs, 'slab', slab_thickness_m)
     slab_reinforcement_kg = slab_volume * (slab_density if slab_density is not None else Decimal('90'))
-    column_beam_reinforcement_kg = column_beam_volume * Decimal('90')  # link-spaced, not a mesh — flat ratio
-    reinforcement_kg = slab_reinforcement_kg + column_beam_reinforcement_kg
+    reinforcement_kg = slab_reinforcement_kg
+    reinforcement_desc = 'slab'
+    if column_beam_volume is not None:
+        reinforcement_kg += column_beam_volume * Decimal('90')  # link-spaced, not a mesh — flat ratio
+        reinforcement_desc = 'columns, beams and slab'
 
-    formwork_columns_beams = column_beam_volume * Decimal('8')
-    formwork_slab_edge = perimeter * Decimal('0.15')
-
-    member_bar_size = _member_bar_size_display(reinforcement_specs, ('column', 'beam'))
-    bar_label = member_bar_size or DEFAULT_BAR_SIZE_FLAG
+    bar_label = _member_bar_size_display(reinforcement_specs, ('column', 'beam')) or DEFAULT_BAR_SIZE_FLAG
     bar_code = _member_bar_size_code(reinforcement_specs, ('column', 'beam')) or DEFAULT_BAR_SIZE_CODE
 
     reinforcement_item, reinforcement_amount = _reinforcement_line(
-        f'High yield reinforcement bars ({bar_label}) to columns, beams and slab',
+        f'High yield reinforcement bars ({bar_label}) to {reinforcement_desc}',
         reinforcement_kg, bar_code, material_for,
     )
+    density_note = 'confirmed reinforcement schedule' if slab_density is not None else 'standard 90kg/m³ default — verify'
+    reinforcement_formula = f'slab volume {_qty(slab_volume)}m³ x mesh density ({density_note})'
+    if column_beam_volume is not None:
+        reinforcement_formula += f' + columns/beams {_qty(column_beam_volume)}m³ x 90kg/m³ standard ratio'
+    reinforcement_item['formula'] = reinforcement_formula
+    reinforcement_item['source'] = f'slab volume: see above; reinforcement density: {density_note}'
     binding_wire_amount = _money(reinforcement_amount * BINDING_WIRE_PERCENT_OF_STEEL_COST / Decimal('100'))
 
-    # Columns/beams and the slab always share the project's one concrete
-    # grade, so they're costed as a single combined raw-material breakdown
-    # rather than two separate sets of cement/sand/granite lines.
-    member_desc = 'columns, beams and suspended floor slab' if framed else 'suspended floor slab'
-    items = [{'description': 'Concrete Work', 'is_section_header': True}]
-    items += _concrete_material_lines(
-        total_concrete_volume, spec.concrete_grade, rate_for,
-        context=f'{member_desc} ({spec.slab_thickness}mm), Grade {spec.get_concrete_grade_display()}',
-    )
     items.append({'description': 'Reinforcement', 'is_section_header': True})
     items.append(reinforcement_item)
     items.append({
@@ -589,21 +705,41 @@ def _superstructure_items(spec, metrics, rate_for, material_for, reinforcement_s
         'unit': 'sum',
         'amount': binding_wire_amount,
         'is_provisional_sum': True,
+        'formula': f'{BINDING_WIRE_PERCENT_OF_STEEL_COST}% of reinforcement cost',
+        'source': 'reinforcement cost: see above',
     })
+
     items.append({'description': 'Formwork', 'is_section_header': True})
     if framed:
+        if column_beam_volume is not None:
+            formwork_columns_beams = column_beam_volume * Decimal('8')
+            items.append({
+                'description': 'Formwork to columns and beams',
+                'qty': _qty(formwork_columns_beams),
+                'unit': 'm²',
+                'rate': rate_for('Formwork to Concrete Edges'),
+                'formula': f'columns/beams volume {_qty(column_beam_volume)}m³ x 8m²/m³ standard ratio '
+                           f'= {_qty(formwork_columns_beams)}m²',
+                'source': 'columns/beams volume: structural member schedule',
+            })
+        else:
+            items.append(_provisional_item(
+                'Formwork to columns and beams — provisional',
+                'framed structure selected but no structural member schedule entered',
+            ))
+    if perimeter is not None:
+        formwork_slab_edge = perimeter * Decimal('0.15')
         items.append({
-            'description': 'Formwork to columns and beams',
-            'qty': _qty(formwork_columns_beams),
+            'description': 'Formwork to slab edges',
+            'qty': _qty(formwork_slab_edge),
             'unit': 'm²',
             'rate': rate_for('Formwork to Concrete Edges'),
+            'formula': f'perimeter {_qty(perimeter)}m x 0.15m = {_qty(formwork_slab_edge)}m²',
+            'source': f'perimeter: {metrics["perimeter_source"]}',
         })
-    items.append({
-        'description': 'Formwork to slab edges',
-        'qty': _qty(formwork_slab_edge),
-        'unit': 'm²',
-        'rate': rate_for('Formwork to Concrete Edges'),
-    })
+    else:
+        items.append(_provisional_item('Formwork to slab edges — provisional', 'building footprint not confirmed'))
+
     return items
 
 
@@ -623,15 +759,39 @@ def _wall_lines(wall_type, wall_type_display, wall_area_m2, context, rate_for):
 
 
 def _blockwork_items(spec, metrics, rate_for):
-    items = _wall_lines(
-        spec.wall_type_external, spec.get_wall_type_external_display(),
-        metrics['external_wall_area'], 'external walls', rate_for,
-    )
-    if metrics['internal_wall_area'] > 0:
-        items += _wall_lines(
-            spec.wall_type_internal, spec.get_wall_type_internal_display(),
-            metrics['internal_wall_area'], 'internal partitions', rate_for,
+    items = []
+    external_area = metrics['external_wall_area']
+    if external_area is not None:
+        lines = _wall_lines(
+            spec.wall_type_external, spec.get_wall_type_external_display(),
+            external_area, 'external walls', rate_for,
         )
+        openings_note = (
+            f'openings deducted: {metrics["door_count"]} door(s) x {DOOR_AREA_M2}m² + '
+            f'{metrics["window_count"]} window(s) x {WINDOW_AREA_M2}m² = {_qty(metrics["openings_area"])}m²'
+            if metrics['openings_confirmed'] else 'no door/window counts confirmed — openings not deducted'
+        )
+        formula = (
+            f'perimeter {_qty(metrics["perimeter"])}m x wall height {metrics["wall_height"]}m '
+            f'- {_qty(metrics["openings_area"]) if metrics["openings_confirmed"] else Decimal("0")}m² openings '
+            f'= {_qty(external_area)}m²'
+        )
+        for line in lines:
+            line['formula'] = formula
+            line['source'] = f'perimeter: {metrics["perimeter_source"]}; wall height: wizard; {openings_note}'
+        items += lines
+    else:
+        items.append(_provisional_item(
+            'Blockwork in external walls — provisional',
+            'building footprint not confirmed — enter it on Review Rooms and regenerate',
+        ))
+
+    if metrics['room_count'] > 1:
+        items.append(_provisional_item(
+            'Blockwork in internal partitions — provisional',
+            "interior wall lengths aren't extracted yet — price separately, or check back for a future update "
+            "that captures them from a structural/interior drawing",
+        ))
     return items
 
 
@@ -639,6 +799,8 @@ def _roof_items(spec, metrics, rate_for):
     roof_area = metrics['roof_area']
     truss_material = TRUSS_MATERIAL_BY_TYPE[spec.truss_type]
     roofing_material = ROOF_MATERIAL_BY_TYPE[spec.roof_type]
+    formula = f'total floor area {_qty(metrics["total_area"])}m² x roof slope factor x 1.15 eaves allowance = {_qty(roof_area)}m²'
+    source = 'total floor area: confirmed rooms; roof pitch: wizard'
 
     return [
         {
@@ -646,70 +808,114 @@ def _roof_items(spec, metrics, rate_for):
             'qty': _qty(roof_area),
             'unit': 'm²',
             'rate': rate_for(truss_material),
+            'formula': formula,
+            'source': source,
         },
         {
             'description': f'{spec.get_roof_type_display()} roof covering',
             'qty': _qty(roof_area),
             'unit': 'm²',
             'rate': rate_for(roofing_material),
+            'formula': formula,
+            'source': source,
         },
     ]
 
 
 def _windows_items(metrics, rate_for):
-    window_area = Decimal(metrics['window_count']) * Decimal('2.0')
+    if not metrics['openings_confirmed']:
+        return [_provisional_item(
+            'Windows — provisional',
+            'no door/window counts confirmed on any room — add them on Review Rooms and regenerate',
+        )]
+    window_count = metrics['window_count']
+    window_area = Decimal(window_count) * WINDOW_AREA_M2
     return [
         {
             'description': 'Supply and install aluminium sliding windows complete with glazing',
             'qty': _qty(window_area),
             'unit': 'm²',
             'rate': rate_for('Aluminium Sliding Window'),
+            'formula': f'{window_count} window(s) x {WINDOW_AREA_M2}m² standard size = {_qty(window_area)}m²',
+            'source': 'window count: confirmed rooms (Review Rooms page)',
         },
     ]
 
 
 def _doors_items(metrics, rate_for):
+    if not metrics['openings_confirmed']:
+        return [_provisional_item(
+            'Doors — provisional',
+            'no door/window counts confirmed on any room — add them on Review Rooms and regenerate',
+        )]
+    door_count = metrics['door_count']
     return [
         {
             'description': 'Supply and install flush doors complete with frame and ironmongery',
-            'qty': Decimal(metrics['door_count']),
+            'qty': Decimal(door_count),
             'unit': 'No',
             'rate': rate_for('Flush Door with Frame and Ironmongery'),
+            'formula': f'{door_count} door(s) confirmed across all rooms',
+            'source': 'door count: confirmed rooms (Review Rooms page)',
         },
     ]
 
 
 def _finishings_items(spec, metrics, rate_for):
     total_area = metrics['total_area']
-    plaster_area = (metrics['external_wall_area'] + metrics['internal_wall_area']) * 2
     ceiling_material = CEILING_MATERIAL[spec.ceiling_type]
     topcoat_material = WALL_FINISH_TOPCOAT_MATERIAL.get(spec.wall_finish)
 
     items = [{'description': 'Floor Finishes', 'is_section_header': True}]
     if spec.floor_finish == 'tiles':
-        items.append(_floor_tile_line(total_area, rate_for))
+        floor_line = _floor_tile_line(total_area, rate_for)
+        floor_line['formula'] = f'total floor area {_qty(total_area)}m² / {TILE_COVERAGE_M2}m² per tile x {TILE_WASTAGE_FACTOR} wastage'
     else:
-        items.append({
+        floor_line = {
             'description': f'{spec.get_floor_finish_display()} to floors',
             'qty': _qty(total_area),
             'unit': 'm²',
             'rate': rate_for(FLOOR_FINISH_MATERIAL[spec.floor_finish]),
-        })
+            'formula': f'total floor area {_qty(total_area)}m²',
+        }
+    floor_line['source'] = 'total floor area: confirmed rooms'
+    items.append(floor_line)
+
     items.append({'description': 'Wall Finishes', 'is_section_header': True})
-    items += _plaster_material_lines(plaster_area, rate_for)
-    if topcoat_material:
-        items.append({
-            'description': f'{spec.get_wall_finish_display()} to walls',
-            'qty': _qty(plaster_area),
-            'unit': 'm²',
-            'rate': rate_for(topcoat_material),
-        })
+    external_area = metrics['external_wall_area']
+    if external_area is not None:
+        plaster_area = external_area * 2  # both faces of the external wall
+        plaster_lines = _plaster_material_lines(plaster_area, rate_for)
+        for line in plaster_lines:
+            line['formula'] = f'external wall area {_qty(external_area)}m² x 2 faces = {_qty(plaster_area)}m²'
+            line['source'] = 'external wall area: see Block Work element'
+        items += plaster_lines
+        if topcoat_material:
+            items.append({
+                'description': f'{spec.get_wall_finish_display()} to walls',
+                'qty': _qty(plaster_area),
+                'unit': 'm²',
+                'rate': rate_for(topcoat_material),
+                'formula': f'external wall area (both faces) {_qty(plaster_area)}m²',
+                'source': 'external wall area: see Block Work element',
+            })
+    else:
+        items.append(_provisional_item('External wall plaster — provisional', 'building footprint not confirmed'))
+
+    if metrics['room_count'] > 1:
+        items.append(_provisional_item(
+            'Internal wall plaster — provisional',
+            "interior wall lengths aren't extracted yet — price separately",
+        ))
+
     items.append({'description': 'Ceiling Finishes', 'is_section_header': True})
     items.append({
         'description': f'{spec.get_ceiling_type_display()} ceiling finish',
         'qty': _qty(total_area),
         'unit': 'm²',
         'rate': rate_for(ceiling_material),
+        'formula': f'total floor area {_qty(total_area)}m²',
+        'source': 'total floor area: confirmed rooms',
     })
     return items
 
@@ -723,6 +929,8 @@ def _plumbing_items(spec, metrics, rate_for):
             'qty': Decimal(metrics['wet_room_count']),
             'unit': 'No',
             'rate': rate_for('Plumbing Installation Allowance (per Wet Room)'),
+            'formula': f'{metrics["wet_room_count"]} wet room(s) (kitchen/bath/toilet/laundry) confirmed',
+            'source': 'wet room count: confirmed rooms, matched by name',
         })
     if spec.water_supply in ('borehole', 'both'):
         items.append({
@@ -730,6 +938,8 @@ def _plumbing_items(spec, metrics, rate_for):
             'qty': Decimal('1'),
             'unit': 'No',
             'rate': rate_for('Borehole Drilling and Casing'),
+            'formula': '1 No — water supply option selected',
+            'source': 'water supply: wizard specification',
         })
     return items
 
@@ -743,27 +953,35 @@ def _electrical_items(spec, metrics, rate_for):
             'qty': _qty(metrics['total_area']),
             'unit': 'm²',
             'rate': rate_for(electrical_material),
+            'formula': f'total floor area {_qty(metrics["total_area"])}m²',
+            'source': 'total floor area: confirmed rooms; package: wizard specification',
         },
     ]
 
 
 def _painting_items(spec, metrics, rate_for):
     paint_rate = rate_for('Emulsion Paint (20L bucket)')
-    items = [
-        {
-            'description': 'Weatherproof emulsion paint, two coats, to external walls',
-            'qty': _ceil_decimal(metrics['external_wall_area'] / PAINT_COVERAGE_PER_BUCKET),
-            'unit': 'bucket',
-            'rate': paint_rate,
-        },
-    ]
-    if spec.wall_finish == 'paint' and metrics['internal_wall_area'] > 0:
+    items = []
+    external_area = metrics['external_wall_area']
+    if external_area is not None:
+        buckets = _ceil_decimal(external_area / PAINT_COVERAGE_PER_BUCKET)
         items.append({
-            'description': 'Emulsion paint, two coats, to internal walls and ceilings',
-            'qty': _ceil_decimal(metrics['internal_wall_area'] / PAINT_COVERAGE_PER_BUCKET),
+            'description': 'Weatherproof emulsion paint, two coats, to external walls',
+            'qty': buckets,
             'unit': 'bucket',
             'rate': paint_rate,
+            'formula': f'external wall area {_qty(external_area)}m² / {PAINT_COVERAGE_PER_BUCKET}m² per bucket, '
+                       f'rounded up = {buckets} bucket(s)',
+            'source': 'external wall area: see Block Work element',
         })
+    else:
+        items.append(_provisional_item('External wall paint — provisional', 'building footprint not confirmed'))
+
+    if spec.wall_finish == 'paint' and metrics['room_count'] > 1:
+        items.append(_provisional_item(
+            'Internal wall & ceiling paint — provisional',
+            "interior wall lengths aren't extracted yet — price separately",
+        ))
     return items
 
 
@@ -778,6 +996,8 @@ def _additional_services_items(spec):
             'unit': 'sum',
             'amount': _money(amount),
             'is_provisional_sum': True,
+            'formula': 'standard allowance for this service',
+            'source': 'additional services: wizard specification',
         })
     return items
 
@@ -807,6 +1027,8 @@ def _persist_beme(project, elements_data):
                 amount=item.get('amount'),
                 is_section_header=is_header,
                 is_provisional_sum=item.get('is_provisional_sum', False),
+                quantity_formula=item.get('formula', ''),
+                source_note=item.get('source', ''),
                 sort_order=item_sort,
             )
 

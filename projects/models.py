@@ -55,7 +55,19 @@ class Project(models.Model):
         return self.name
 
 
-class FloorPlanUpload(models.Model):
+class ProjectDrawing(models.Model):
+    """A single uploaded drawing/document, tagged by discipline. Replaces
+    FloorPlanUpload — the extraction pipeline now runs one discipline-specific
+    pass per drawing rather than assuming one architectural floor plan
+    contains everything a BOQ needs."""
+    DISCIPLINE_CHOICES = [
+        ('architectural', 'Architectural'),
+        ('structural', 'Structural'),
+        ('electrical', 'Electrical'),
+        ('plumbing_mechanical', 'Plumbing/Mechanical'),
+        ('specification_document', 'Specification Document'),
+        ('other', 'Other'),
+    ]
     STATUS_CHOICES = [
         ('pending', 'Pending'),
         ('processing', 'Processing'),
@@ -63,11 +75,24 @@ class FloorPlanUpload(models.Model):
         ('failed', 'Failed'),
     ]
 
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='floor_plans')
-    file = models.FileField(upload_to='floor_plans/%Y/%m/')
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='drawings')
+    file = models.FileField(upload_to='drawings/%Y/%m/')
+    discipline = models.CharField(max_length=30, choices=DISCIPLINE_CHOICES, default='architectural')
     uploaded_at = models.DateTimeField(auto_now_add=True)
     extraction_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     extraction_error = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    extraction_flags = models.JSONField(
+        default=dict, blank=True,
+        help_text='Extraction-time notices for the review page: excluded_candidates '
+                   '(items deliberately not turned into rooms), external_works_noted, area_mismatch_pct.',
+    )
+    reviewed = models.BooleanField(
+        default=False,
+        help_text='Engineer has reviewed/confirmed this drawing\'s extracted data. '
+                   'BOQ generation is blocked until every architectural drawing is reviewed.',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ['-uploaded_at']
@@ -85,10 +110,15 @@ class Room(models.Model):
     ]
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='rooms')
+    source_drawing = models.ForeignKey(
+        ProjectDrawing, on_delete=models.SET_NULL, null=True, blank=True, related_name='rooms',
+    )
     name = models.CharField(max_length=100)
     width = models.DecimalField(max_digits=8, decimal_places=2)
     length = models.DecimalField(max_digits=8, decimal_places=2)
     area = models.DecimalField(max_digits=10, decimal_places=2, editable=False)
+    door_count = models.PositiveIntegerField(default=0, help_text='Door openings visible/confirmed for this room.')
+    window_count = models.PositiveIntegerField(default=0, help_text='Window openings visible/confirmed for this room.')
     confidence = models.CharField(max_length=10, choices=CONFIDENCE_CHOICES, default='medium')
     is_manual = models.BooleanField(default=False)
 
@@ -98,6 +128,115 @@ class Room(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class StructuralElement(models.Model):
+    ELEMENT_TYPE_CHOICES = [
+        ('column', 'Column'),
+        ('beam', 'Beam'),
+        ('slab', 'Slab'),
+        ('footing', 'Footing'),
+        ('foundation_detail', 'Foundation Detail'),
+    ]
+    CONFIDENCE_CHOICES = Room.CONFIDENCE_CHOICES
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='structural_elements')
+    source_drawing = models.ForeignKey(
+        ProjectDrawing, on_delete=models.SET_NULL, null=True, blank=True, related_name='structural_elements',
+    )
+    element_type = models.CharField(max_length=20, choices=ELEMENT_TYPE_CHOICES)
+    label = models.CharField(max_length=20, blank=True, help_text='As printed in the drawing schedule, e.g. C1, B2.')
+    size = models.CharField(max_length=30, blank=True, help_text='e.g. 225x225')
+    count = models.PositiveIntegerField(default=1)
+    reinforcement_main = models.CharField(max_length=50, blank=True, help_text='e.g. 4Y16')
+    reinforcement_links = models.CharField(max_length=50, blank=True, help_text='e.g. Y8@200')
+    concrete_grade = models.CharField(max_length=10, blank=True)
+    depth_mm = models.DecimalField(max_digits=7, decimal_places=1, null=True, blank=True)
+    confidence = models.CharField(max_length=10, choices=CONFIDENCE_CHOICES, default='medium')
+    is_manual = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f'{self.label or self.get_element_type_display()} ({self.size})'
+
+
+class ElectricalPoint(models.Model):
+    POINT_TYPE_CHOICES = [
+        ('lighting_point', 'Lighting Point'),
+        ('socket_13a', '13A Socket'),
+        ('socket_15a', '15A Socket'),
+        ('switch', 'Switch'),
+        ('distribution_board', 'Distribution Board'),
+        ('cooker_point', 'Cooker Point'),
+        ('ac_point', 'AC Point'),
+        ('other', 'Other'),
+    ]
+    CONFIDENCE_CHOICES = Room.CONFIDENCE_CHOICES
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='electrical_points')
+    source_drawing = models.ForeignKey(
+        ProjectDrawing, on_delete=models.SET_NULL, null=True, blank=True, related_name='electrical_points',
+    )
+    point_type = models.CharField(max_length=30, choices=POINT_TYPE_CHOICES)
+    description = models.CharField(max_length=200, blank=True)
+    count = models.PositiveIntegerField(default=1)
+    confidence = models.CharField(max_length=10, choices=CONFIDENCE_CHOICES, default='medium')
+    is_manual = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f'{self.get_point_type_display()} x{self.count}'
+
+
+class PlumbingFixture(models.Model):
+    FIXTURE_TYPE_CHOICES = [
+        ('wc', 'WC'),
+        ('wash_hand_basin', 'Wash Hand Basin'),
+        ('sink', 'Sink'),
+        ('shower', 'Shower'),
+        ('bath', 'Bath'),
+        ('floor_drain', 'Floor Drain'),
+        ('water_heater', 'Water Heater'),
+        ('other', 'Other'),
+    ]
+    CONFIDENCE_CHOICES = Room.CONFIDENCE_CHOICES
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='plumbing_fixtures')
+    source_drawing = models.ForeignKey(
+        ProjectDrawing, on_delete=models.SET_NULL, null=True, blank=True, related_name='plumbing_fixtures',
+    )
+    fixture_type = models.CharField(max_length=30, choices=FIXTURE_TYPE_CHOICES)
+    description = models.CharField(max_length=200, blank=True)
+    count = models.PositiveIntegerField(default=1)
+    confidence = models.CharField(max_length=10, choices=CONFIDENCE_CHOICES, default='medium')
+    is_manual = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f'{self.get_fixture_type_display()} x{self.count}'
+
+
+class SpecificationItem(models.Model):
+    CATEGORY_CHOICES = [
+        ('concrete', 'Concrete'),
+        ('blockwork', 'Blockwork'),
+        ('finishes', 'Finishes'),
+        ('roofing', 'Roofing'),
+        ('doors_windows', 'Doors/Windows'),
+        ('services', 'Services'),
+        ('general', 'General'),
+    ]
+    CONFIDENCE_CHOICES = Room.CONFIDENCE_CHOICES
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='specification_items')
+    source_drawing = models.ForeignKey(
+        ProjectDrawing, on_delete=models.SET_NULL, null=True, blank=True, related_name='specification_items',
+    )
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
+    key = models.CharField(max_length=100, help_text='e.g. floor_finish')
+    value = models.CharField(max_length=255, help_text='e.g. 600x600 vitrified tiles')
+    confidence = models.CharField(max_length=10, choices=CONFIDENCE_CHOICES, default='medium')
+    is_manual = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f'{self.key}: {self.value}'
 
 
 ADDITIONAL_SERVICES_CHOICES = [

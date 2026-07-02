@@ -25,28 +25,36 @@
     </div>
   </div>
 
-  <h2>Floor Plan</h2>
-  <form method="post" action="{% url 'projects:floor_plan_upload' project.pk %}" enctype="multipart/form-data" class="card-form upload-form">
+  <h2>Drawings</h2>
+  <form method="post" action="{% url 'projects:drawing_upload' project.pk %}" enctype="multipart/form-data" class="card-form upload-form">
     {% csrf_token %}
     <div class="field">
-      <label for="id_file">Upload floor plan (PDF, JPG, PNG, WEBP)</label>
+      <label for="id_discipline">Discipline</label>
+      {{ upload_form.discipline }}
+      {% if upload_form.discipline.errors %}<div class="field-errors">{{ upload_form.discipline.errors }}</div>{% endif %}
+    </div>
+    <div class="field">
+      <label for="id_file">Upload drawing (PDF, JPG, PNG, WEBP)</label>
       {{ upload_form.file }}
       {% if upload_form.file.errors %}<div class="field-errors">{{ upload_form.file.errors }}</div>{% endif %}
     </div>
-    <button type="submit" class="btn-primary btn-inline">Upload &amp; Extract Rooms</button>
+    <button type="submit" class="btn-primary btn-inline">Upload &amp; Extract</button>
   </form>
+  <p class="empty-state">Only Architectural drawings are automatically extracted right now — other disciplines are stored for reference until their extraction passes are built.</p>
 
-  {% if floor_plans %}
+  {% if drawings %}
   <table class="data-table">
     <thead>
-      <tr><th>File</th><th>Status</th><th>Uploaded</th></tr>
+      <tr><th>File</th><th>Discipline</th><th>Status</th><th>Reviewed</th><th>Uploaded</th></tr>
     </thead>
     <tbody>
-      {% for fp in floor_plans %}
+      {% for drawing in drawings %}
       <tr>
-        <td><a href="{{ fp.file.url }}" target="_blank">{{ fp.file.name }}</a></td>
-        <td>{{ fp.get_extraction_status_display }}{% if fp.extraction_error %} — {{ fp.extraction_error }}{% endif %}</td>
-        <td>{{ fp.uploaded_at|date:"d M Y H:i" }}</td>
+        <td><a href="{{ drawing.file.url }}" target="_blank">{{ drawing.file.name }}</a></td>
+        <td>{{ drawing.get_discipline_display }}</td>
+        <td>{{ drawing.get_extraction_status_display }}{% if drawing.extraction_error %} — {{ drawing.extraction_error }}{% endif %}</td>
+        <td>{% if drawing.reviewed %}Confirmed{% else %}Pending review{% endif %}</td>
+        <td>{{ drawing.uploaded_at|date:"d M Y H:i" }}</td>
       </tr>
       {% endfor %}
     </tbody>

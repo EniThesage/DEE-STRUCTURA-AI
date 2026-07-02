@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import FloorPlanUpload, Project, ProjectSpec, Room
+from .models import ProjectDrawing, Project, ProjectSpec, Room
 
 
 @admin.register(Project)
@@ -10,10 +10,10 @@ class ProjectAdmin(admin.ModelAdmin):
     search_fields = ['name', 'client_name']
 
 
-@admin.register(FloorPlanUpload)
-class FloorPlanUploadAdmin(admin.ModelAdmin):
-    list_display = ['project', 'file', 'extraction_status', 'uploaded_at']
-    list_filter = ['extraction_status']
+@admin.register(ProjectDrawing)
+class ProjectDrawingAdmin(admin.ModelAdmin):
+    list_display = ['project', 'file', 'discipline', 'extraction_status', 'reviewed', 'uploaded_at']
+    list_filter = ['discipline', 'extraction_status', 'reviewed']
 
 
 @admin.register(Room)

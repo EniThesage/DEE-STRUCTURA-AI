@@ -2,10 +2,10 @@ from django import forms
 from django.forms import inlineformset_factory
 
 from .models import (
-    ADDITIONAL_SERVICES_CHOICES, FloorPlanUpload, Project, ProjectSpec, ReinforcementSpec, StructuralMember,
+    ADDITIONAL_SERVICES_CHOICES, Project, ProjectDrawing, ProjectSpec, ReinforcementSpec, StructuralMember,
 )
 
-VALID_FLOOR_PLAN_EXTENSIONS = ('.pdf', '.jpg', '.jpeg', '.png', '.webp')
+VALID_DRAWING_EXTENSIONS = ('.pdf', '.jpg', '.jpeg', '.png', '.webp')
 
 
 class ProjectForm(forms.ModelForm):
@@ -14,14 +14,14 @@ class ProjectForm(forms.ModelForm):
         fields = ['name', 'client_name', 'location', 'building_type']
 
 
-class FloorPlanUploadForm(forms.ModelForm):
+class ProjectDrawingUploadForm(forms.ModelForm):
     class Meta:
-        model = FloorPlanUpload
-        fields = ['file']
+        model = ProjectDrawing
+        fields = ['file', 'discipline']
 
     def clean_file(self):
         file = self.cleaned_data['file']
-        if not file.name.lower().endswith(VALID_FLOOR_PLAN_EXTENSIONS):
+        if not file.name.lower().endswith(VALID_DRAWING_EXTENSIONS):
             raise forms.ValidationError('Unsupported file type. Upload a PDF, JPG, PNG, or WEBP file.')
         return file
 
